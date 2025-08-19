@@ -1,8 +1,8 @@
 import numpy as np
 import jax.numpy as jnp
-from typing import Callable, List, Optional, Tuple, Union, Dict
+from typing import Callable, List, Optional, Tuple, Dict
 
-from photon_weave.extra import expression_interpreter, interpreter
+from photon_weave.extra import interpreter
 from photon_weave.state.custom_state import CustomState
 from photon_weave.state.envelope import Envelope
 from qutip import Qobj
@@ -13,7 +13,8 @@ from bec.helpers.converter import (
     omega_from_energy_eV,
 )
 from bec.light.base import LightMode
-from bec.light.helpers import GaussianEnvelope
+from bec.light.classical import ClassicalTwoPhotonDrive
+from bec.light.envelopes import GaussianEnvelope
 from bec.quantum_dot.params import CavityParams, DipoleParams, EnergyLevels
 from .base import QuantumDotSystemBase
 
@@ -28,93 +29,6 @@ from bec.operators.qd_operators import QDState, transition_operator
 
 
 class QuantumDotSystem(QuantumDotSystemBase):
-    """
-    QuantumDotSystem
-    ================
-    Composite open-system model of a semiconductor quantum dot (QD) coupled to
-    polarization-resolved photomic modes. The class builds:
-    - the QD operators (|G>, |X1>, |X2>, |XX> manifold)
-    - rotated ladder operators for each optical mode (+/- polarizations),
-    - the fine-structure-splitting Hamiltonian H_fss,
-    - an optional classical H_drive (G<->XX),
-    - an optional light-matter interaction H_int for *flying* (input) modes,
-    - Lindblad collapse operators for *intrinsic* (output) spontaneous decays.
-
-    The object exposes a simbolic "context" that can be evaluated into dense
-    QuTip `Qobj`s with the provided interpreters. The total Hilbert space is
-    ordered as: QD ⊗ (H,V)mode0 ⊗ (H,V)mode1 ⊗ …, with each optical mode
-    represented by two truncated Fock spaces (H and V), internally re-expressed
-    in a rotated ± basis via (THETA, PHI).
-
-    Parameters
-    ----------
-    energy_levels : EnergyLevels
-        Energies of |G>, |X1>, |X2>, |XX> and fine-structure parameters.
-        The FSS and anisotropy determine (THETA, PHI), which set the rotated
-        polarization basis used for the Ladder operators a_{±}.
-    initial_state : QDState, optional
-        Initial QD level (default: QDState.G)
-    cavity_params: CavityParams, optional
-        Geometric/optical parameters (Q, V_eff, lambda, n). Used upstream to
-        set couplings and rates; accessible here via `self.cavity_params`.
-    dipole_params : DipoleParams, optional
-        Dipole oment etc. Used upstream to set coherent/irreversible rates.
-    time_unit_s: float, optional
-        Base time unit (seconds) for all time-dependent pieces
-
-    Model structure
-    ---------------
-    • Rotated ladder operators
-        Each optical mode `i` has creation/annihilation operators a_{i,±}^{(†)}
-        defined by a polarization rotation (THETA, PHI) from the {H,V} basis.
-        The per-mode number operators are n_{i,±} = a_{i,±}† a_{i,±}.
-
-    • Modes and roles
-        self.modes is the concatenation of:
-          – intrinsic modes (created by the base class): these represent the
-            *output* decay channels (spontaneous emission). They are identified
-            by `len(mode) == 3` and are *not* included in H_int.
-          – flying modes (registered via `register_flying_modes`): these are
-            *input* channels matched to physical transition wavelengths. They
-            can be included in H_int for coherent absorption/stimulated
-            emission
-
-        **Best-practice split**
-          - Use H_int only for flying input modes you wish to drive/absorb from
-          - Use collapse operators only for intrinsic output channels you wish
-            to model as an irreversible bath. Do not include the same channel
-            in both H_int and the collapse set to avoid double counting.
-
-    • Hamiltonians
-        _hamiltonian_fss()     → H_fss on the QD subspace (Kron-padded).
-        _hamiltonian_drive()   → H_drive (G <-> XX) from a classical field.
-        _hamiltonian_light_matter_interaction()
-                              → Σ_i g_i (a_{i,±} σ^+ + a_{i,±}† σ^−) for
-                                *flying* modes only.
-
-    • Collapse operators (Lindblad)
-        _collapse_operators() builds the spontaneous emissions:
-          L_{XX→X1}, L_{XX→X2}, L_{X1→G}, L_{X2→G}
-        Each is Kron-padded to the full space and emits into an intrinsic mode
-        with polarization tied to the rotated ± basis (THETA, PHI).
-
-        Rates are taken from `self.gammas`:
-            "L_XX_X1", "L_XX_X2", "L_X1_G", "L_X2_G"
-        Set them on the instance *before* calling `qutip_collapse_operators`.
-
-    Public attributes
-    -----------------
-    dot : CustomState
-        4-level QD register used in the composite state layout.
-    THETA, PHI : float
-        Polarization rotation parameters defining the ± basis for ladder ops.
-    _context : dict[str, Callable]
-        Symbolic operator factory (used by `interpreter(...)` to build arrays).
-    modes : list
-        All modes (intrinsic + flying). See “Modes and roles”.
-
-    """
-
     def __init__(
         self,
         energy_levels: EnergyLevels,
@@ -143,7 +57,12 @@ class QuantumDotSystem(QuantumDotSystemBase):
         return (*self._modes, *self._pb_modes)
 
     def filter_modes(self, label: str):
-        return [m for m in self.modes if m.label == label][0]
+        candidates = [m for m in self.modes if m.label == label]
+        if len(candidates) == 0:
+            print(f"[QD] no mode found: Searching for {label}")
+            print("[QD] known modes:", [m.label for m in self.modes])
+            return None
+        return candidates[0]
 
     @property
     def context(self):
@@ -246,10 +165,11 @@ class QuantumDotSystem(QuantumDotSystemBase):
                 lines_nm[4]
             ),  # same as wm if exactly at half energy
         ]
-        sigma_w = 1.0 / sigma_time_s
+        sigma_w = 2 * np.pi / sigma_time_s
 
         near = []
         for i in [0, 1, 2, 3]:
+            print(wm, w_lines[i])
             if abs(wm - w_lines[i]) <= k * sigma_w:
                 near.append(i)
         near_tpe_center = abs(wm - w_lines[4]) <= k * sigma_w
@@ -301,6 +221,9 @@ class QuantumDotSystem(QuantumDotSystemBase):
             "s_X2_X2": lambda _: jnp.array(
                 transition_operator(QDState.X2, QDState.X2)
             ),
+            "s_XX_XX": lambda _: jnp.array(
+                transition_operator(QDState.XX, QDState.XX)
+            ),
             "idq": lambda _: jnp.eye(4),
         }
 
@@ -327,13 +250,13 @@ class QuantumDotSystem(QuantumDotSystemBase):
                 d[_s], THETA, PHI, operator=Ladder.A_DAG, pol=Pol.MINUS
             ),
             f"n{i}+": lambda d, _s=s: rotated_ladder_operator(
-                d[_s], THETA, pol=Pol.PLUS, operator=Ladder.A_DAG
+                d[_s], THETA, PHI, pol=Pol.PLUS, operator=Ladder.A_DAG
             )
             @ rotated_ladder_operator(
                 d[_s], THETA, PHI, pol=Pol.PLUS, operator=Ladder.A
             ),
             f"n{i}-": lambda d, _s=s: rotated_ladder_operator(
-                d[_s], THETA, pol=Pol.MINUS, operator=Ladder.A_DAG
+                d[_s], THETA, PHI, pol=Pol.MINUS, operator=Ladder.A_DAG
             )
             @ rotated_ladder_operator(
                 d[_s], THETA, PHI, pol=Pol.MINUS, operator=Ladder.A
@@ -408,10 +331,11 @@ class QuantumDotSystem(QuantumDotSystemBase):
         lam = flying_mode.wavelength
         # Classify near-resonant single-photon transitions and TPE center
         near, near_tpe_center = self._near_resonant_indices(
-            lam, gaussian.sigma, k=k
+            lam, gaussian.sigma * self.time_unit_s, k=k
         )
 
         # (A) single-photon LightMode if any near-resonant single-photon lines
+        print(near, near_tpe_center)
         if near:
             self._pb_modes.append(
                 LightMode(
@@ -469,6 +393,7 @@ class QuantumDotSystem(QuantumDotSystemBase):
             ]
             if not candidates:
                 print("[QD] no coupling candidates found!")
+                print("[QD] Possible couplings:", possibles)
             else:
                 # treat as single by default
                 self._pb_modes.append(
@@ -487,19 +412,14 @@ class QuantumDotSystem(QuantumDotSystemBase):
     def build_hamiltonians(
         self,
         dims: List[int],
-        classical_drives=None,
+        classical_2g: Optional[ClassicalTwoPhotonDrive] = None,
         wavelength_tolerance_nm: float = 1.0,
         **params,
-    ) -> List[Tuple[Qobj, Callable | float | str | None]]:
-        """
-        Return a list of (H_block, coeff) pairs usable by QuTiP mesolve.
-        """
-        H_terms: List[Tuple[Qobj, Callable | float | str | None]] = []
+    ):
+        H0 = self.qutip_hamiltonian_fss(dims)  # static base term
+        H_terms = [H0]  # first element is a bare Qobj
 
-        # Always include FSS
-        H_terms.append((self.qutip_hamiltonian_fss(dims), None))
-
-        # External modes
+        # External modes (time-dependent couplings)
         for m in [
             m for m in self.modes if getattr(m, "source", None) == "external"
         ]:
@@ -508,11 +428,9 @@ class QuantumDotSystem(QuantumDotSystemBase):
                     m.label, dims
                 )
                 f = m.gaussian
-                H_terms.append((Hk, lambda t, args, _f=f: _f(t)))  # g(t)=f(t)
-
+                H_terms.append([Hk, lambda t, args=None, _f=f: float(_f(t))])
             elif m.role == "tpe":
-                Hk = self.qutip_hamiltonian_two_photon_excitation(
-                    m.label, dims)
+                Hk = self.qutip_hamiltonian_two_photon_excitation(m.label, dims)
                 f = m.gaussian
                 A = 0.0
                 if "X1" in m.tpe_eliminated:
@@ -520,14 +438,27 @@ class QuantumDotSystem(QuantumDotSystemBase):
                 if "X2" in m.tpe_eliminated:
                     A += m.tpe_alpha_X2
                 H_terms.append(
-                    (Hk, lambda t, args, _f=f, _A=A: _A * (_f(t) ** 2))
-                )  # Λ(t)=A f(t)^2
+                    [
+                        Hk,
+                        lambda t, args=None, _f=f, _A=A: float(
+                            _A * (_f(t) ** 2)
+                        ),
+                    ]
+                )
 
-        # (Optional) classical drive
-        if classical_drives:
-            Hdrv = self.qutip_hamiltonian_classical_drive(dims)
-            coeff = classical_drives if callable(classical_drives) else 0.0
-            H_terms.append((Hdrv, coeff))
+        # Classical 2-photon drive
+        if classical_2g is not None:
+            H_flip = self.qutip_hamiltonian_classical_2g_flip(dims)
+            H_det = self.qutip_hamiltonian_classical_2g_detuning(dims)
+
+            # Ω(t) piece (time-dependent)
+            H_terms.append([H_flip, classical_2g.qutip_coeff()])
+
+            # Δ_L piece: you can add it as a constant coefficient term:
+            if classical_2g.detuning != 0.0:
+                H_terms.append([H_det, classical_2g.detuning])
+                # or, if you prefer, fold it into H0:
+                # H0 += classical_2g.detuning * H_det
 
         return H_terms
 
@@ -591,21 +522,32 @@ class QuantumDotSystem(QuantumDotSystemBase):
         H_em = self._k("s_XX_G", "aa_dag", i)
         return ("add", H_abs, H_em)
 
-    def _hamiltonian_classical_drive(self):
+    def _hamiltonian_classical_2g_flip(self) -> tuple:
         """
-        Classical *effective* two-photon drive for G <-> XX (QD-only operator):
-            H = |XX><G| + |G><XX|  = s_XX_G + s_G_XX
+        H_flip = (|G><XX| + |XX><G|) kron I_fock
+        This is the time-dependent part multiplied by Ω(t) in the solver list.
         """
-        H_local = self._qd("s_XX_G") + self._qd("s_G_XX")
+        H_local = self._qd("s_G_XX") + self._qd("s_XX_G")
+        return self._k(H_local, "i", -1)
+
+    def _hamiltonian_classical_2g_detuning(self) -> tuple:
+        """
+        H_det = |XX><XX| kron I_fock
+        This is multiplied by the constant two-photon detuning Δ_L (rad/s).
+        """
+        H_local = self._qd("s_XX_XX")
         return self._k(H_local, "i", -1)
 
     # QUTIP HAMILTONIANS
 
+    def qutip_hamiltonian_classical_2g_flip(self, dims: List[int]) -> Qobj:
+        return self._qobj(self._hamiltonian_classical_2g_flip(), dims)
+
+    def qutip_hamiltonian_classical_2g_detuning(self, dims: List[int]) -> Qobj:
+        return self._qobj(self._hamiltonian_classical_2g_detuning(), dims)
+
     def qutip_hamiltonian_fss(self, dims: List[int]):
         return self._qobj(self._hamiltonian_fss(), dims)
-
-    def qutip_hamiltonian_classical_drive(self, dims: List[int]):
-        return self._qobj(self._hamiltonian_classical_drive(), dims)
 
     def qutip_hamiltonian_light_matter_interaction(
         self, label: str, dims: List[int]

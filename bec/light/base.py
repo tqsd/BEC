@@ -10,8 +10,8 @@ class LightMode:
         wavelength_nm: float,
         source: Literal["internal", "external"],
         transitions: list[int],
-        gaussian: GaussianEnvelope,
         label: Optional[str] = None,
+        gaussian: Optional[GaussianEnvelope] = None,
         *,
         role: Literal["single", "tpe"] = "single",
         tpe_eliminated: Optional[Set[str]] = None,  # {"X1","X2"} subset
