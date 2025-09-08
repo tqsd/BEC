@@ -44,10 +44,57 @@ QD_ALPHAS = {
     r"$|XX\rangle$": 0.75,
 }
 
+PALETTE_OKABE_ITO = [
+    "#000000",
+    "#E69F00",
+    "#56B4E9",
+    "#009E73",
+    "#F0E442",
+    "#0072B2",
+    "#D55E00",
+    "#CC79A7",
+]
 
-def _build_color_map(labels, offset=0):
+# 2) Tol Bright (nice on white backgrounds, 7 colors)
+PALETTE_TOL_BRIGHT = [
+    "#4477AA",
+    "#EE6677",
+    "#228833",
+    "#CCBB44",
+    "#66CCEE",
+    "#AA3377",
+    "#BBBBBB",
+]
+
+# 3) Kelly 20 (very saturated, 20 colors)
+PALETTE_KELLY_20 = [
+    "#803E75",
+    "#FF6800",
+    "#A6BDD7",
+    "#C10020",
+    "#53377A",
+    "#CEA262",
+    "#817066",
+    "#007D34",
+    "#F6768E",
+    "#00538A",
+    "#FF7A5C",
+    "#FF8E00",
+    "#B32851",
+    "#F4C800",
+    "#7F180D",
+    "#93AA00",
+    "#593315",
+    "#F13A13",
+    "#232C16",
+]
+
+
+def _build_color_map(labels, palette=PALETTE_OKABE_ITO, offset=0):
+    """Deterministic label→color map cycling through a chosen palette."""
     uniq = list(dict.fromkeys(labels))
-    return {lbl: f"C{(i + offset) % 10}" for i, lbl in enumerate(uniq)}
+    n = len(palette)
+    return {lbl: palette[(i + offset) % n] for i, lbl in enumerate(uniq)}
 
 
 def latex_mode_label(lbl: str) -> str:
@@ -240,7 +287,7 @@ def plot_qd_comparison(
                     color=out_color[lbl],
                     ls="--",
                     lw=1,
-                    alpha=0.7,
+                    alpha=1,
                 )
         if j == 0:
             ax_bot.set_ylabel(r"$\langle N\rangle$ (out)")

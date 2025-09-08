@@ -1,6 +1,5 @@
 import numpy as np
 from enum import Enum, auto
-from dataclasses import dataclass
 
 
 class Pol(Enum):

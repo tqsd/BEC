@@ -22,7 +22,7 @@ QD2 = QuantumDotSystem(
 
 
 DRIVE1 = ClassicalTwoPhotonDrive(
-    omega=GaussianEnvelope(t0=3, sigma=0.25, area=np.pi / 2), detuning=0
+    omega=GaussianEnvelope(t0=3, sigma=1, area=np.pi / 2), detuning=0
 )
 
 sigma2 = 100 * T  # very wide → looks flat over [0,T]
@@ -32,15 +32,15 @@ DRIVE2 = ClassicalTwoPhotonDrive(
     omega=GaussianEnvelope(t0=T / 2, sigma=sigma2, area=area2), detuning=0
 )
 
-plotter1 = QDPlotter(QD1, classical_2g=DRIVE1, tlist=np.linspace(0, T, 50000))
-plotter2 = QDPlotter(QD2, classical_2g=DRIVE2, tlist=np.linspace(0, T, 50000))
+plotter1 = QDPlotter(QD1, classical_2g=DRIVE1, tlist=np.linspace(0, T, 10000))
+plotter2 = QDPlotter(QD2, classical_2g=DRIVE2, tlist=np.linspace(0, T, 5000))
 
 
 def debug_drive(plotter):
     cf = plotter.classical_2g.qutip_coeff()  # callable f(t, args)
     t = plotter.tlist
     Om = np.array([cf(tt, {}) for tt in t])
-    print("Ω(t): max =", Om.max(), " area ≈", np.trapz(Om, t))
+    print("Ω(t): max =", Om.max(), " area ≈", np.trapezoid(Om, t))
     return Om
 
 

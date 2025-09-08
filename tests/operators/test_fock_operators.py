@@ -26,8 +26,7 @@ class RotatedLadderTests(unittest.TestCase):
         for d in (2, 3, 5):
             a = ladder_operator(d, Ladder.A)
             adag = ladder_operator(d, Ladder.A_DAG)
-            np.testing.assert_allclose(
-                adag, a.conj().T, atol=1e-12, rtol=1e-12)
+            np.testing.assert_allclose(adag, a.conj().T, atol=1e-12, rtol=1e-12)
 
             I = np.eye(d)
             Ptop = top_projector(d)
@@ -38,40 +37,16 @@ class RotatedLadderTests(unittest.TestCase):
 
     def test_rotated_commutation_relation_truncated(self):
         for d in (2, 3, 4):
-            I = np.eye(d)
-            P = top_projector(d)
-            # NOTE: basis ordering: aH = kron(a, I), aV = kron(I, a)
-            P_H = np.kron(I, P)  # <-- projector on second factor (V)
-            P_V = np.kron(P, I)  # <-- projector on first  factor (H)
-            IHV = np.eye(d * d)
-
-            for pol in (Pol.PLUS, Pol.MINUS):
-                for theta, phi in self.angles():
-                    a = rotated_ladder_operator(d, theta, phi, pol, Ladder.A)
-                    adag = rotated_ladder_operator(
-                        d, theta, phi, pol, Ladder.A_DAG
-                    )
-                    comm = a @ adag - adag @ a
-                    expected = IHV - d * (
-                        np.cos(theta) ** 2 * P_H + np.sin(theta) ** 2 * P_V
-                    )
-                    np.testing.assert_allclose(
-                        comm, expected, atol=1e-11, rtol=1e-11
-                    )
-
-    def test_rotated_commutation_relation_truncated(self):
-        for d in (2, 3, 4):
             I = np.eye(d, dtype=complex)
-            # base single-mode annihilation
             a = ladder_operator(d, Ladder.A)
 
-            # Define base H/V ops exactly as in your implementation
+            # Base H/V ops in H⊗V
             aH = np.kron(a, I)
             aHdag = aH.conj().T
             aV = np.kron(I, a)
             aVdag = aV.conj().T
 
-            # Their truncated-space commutators
+            # Truncated-space commutators for H and V
             comm_H = aH @ aHdag - aHdag @ aH
             comm_V = aV @ aVdag - aVdag @ aV
 
@@ -79,7 +54,7 @@ class RotatedLadderTests(unittest.TestCase):
                 for theta, phi in self.angles():
                     c, s = np.cos(theta), np.sin(theta)
 
-                    # Your rotated operator
+                    # Rotated operators
                     a_rot = rotated_ladder_operator(
                         d, theta, phi, pol, Ladder.A
                     )
@@ -88,8 +63,11 @@ class RotatedLadderTests(unittest.TestCase):
                     )
                     comm = a_rot @ a_rotdag - a_rotdag @ a_rot
 
-                    # Expected from linearity & vanishing cross-terms
-                    expected = (c**2) * comm_H + (s**2) * comm_V
+                    # Expected linear combination (cross-terms vanish)
+                    if pol is Pol.PLUS:
+                        expected = (c**2) * comm_H + (s**2) * comm_V
+                    else:  # Pol.MINUS
+                        expected = (s**2) * comm_H + (c**2) * comm_V
 
                     np.testing.assert_allclose(
                         comm, expected, atol=1e-11, rtol=1e-11
@@ -101,8 +79,7 @@ class RotatedLadderTests(unittest.TestCase):
                         * s
                         * (aH @ aVdag - aVdag @ aH + aV @ aHdag - aHdag @ aV)
                     )
-                    np.testing.assert_allclose(
-                        cross, 0, atol=1e-12, rtol=1e-12)
+                    np.testing.assert_allclose(cross, 0, atol=1e-12, rtol=1e-12)
 
     def test_invalid_operator_rejected(self):
         with self.assertRaises(ValueError):

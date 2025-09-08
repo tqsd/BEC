@@ -50,24 +50,11 @@ class EnergyLevels:
         def etw(e):
             return energy_to_wavelength_nm(e)
 
-        if abs(self.fss) < 1e-9 and abs(self.delta_prime) < 1e-9:
-            modes.append(LightMode(etw(e_X1_G), "internal", [0, 1], "X<->G"))
-            modes.append(LightMode(etw(e_XX_X1), "internal", [2, 3], "XX<->X"))
-        elif same_lambda(e_XX_X1, e_X2_G):
-            print("SAME LAMBDA")
-            # Cross-degenerate case: XX→X1 same λ as X2→G
-            modes.append(
-                LightMode(etw(e_X1_G), "internal", [0, 3], "X1<->G & X2<->XX")
-            )
-            modes.append(
-                LightMode(etw(e_X2_G), "internal", [1, 2], "X2<->G & X1<->XX")
-            )
-        else:
-            # General case: all four distinct
-            modes.append(LightMode(etw(e_X1_G), "internal", [0], "X1<->G"))
-            modes.append(LightMode(etw(e_X2_G), "internal", [1], "X2<->G"))
-            modes.append(LightMode(etw(e_XX_X1), "internal", [2], "XX<->X1"))
-            modes.append(LightMode(etw(e_XX_X2), "internal", [3], "XX<->X2"))
+        # General case: all four distinct
+        modes.append(LightMode(etw(e_X1_G), "internal", [0], "X1<->G"))
+        modes.append(LightMode(etw(e_X2_G), "internal", [1], "X2<->G"))
+        modes.append(LightMode(etw(e_XX_X1), "internal", [2], "XX<->X1"))
+        modes.append(LightMode(etw(e_XX_X2), "internal", [3], "XX<->X2"))
 
         return modes
 
@@ -75,8 +62,7 @@ class EnergyLevels:
         delta = self.fss
         delta_p = self.delta_prime
         # Hamiltonian in |X1>, |X2> basis
-        H = 0.5 * \
-            np.array([[delta, delta_p], [delta_p, -delta]], dtype=complex)
+        H = 0.5 * np.array([[delta, delta_p], [delta_p, -delta]], dtype=complex)
 
         # Eigen-decomposition
         eigvals, eigvecs = np.linalg.eigh(H)

@@ -128,6 +128,7 @@ class QDPlotter:
         self.H = self.qd.build_hamiltonians(
             dims=self.DIMENSIONS,
             classical_2g=self.classical_2g,
+            tlist=self.tlist,
         )
         self.C_OPS = self.qd.qutip_collapse_operators(self.DIMENSIONS)
 

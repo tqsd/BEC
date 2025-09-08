@@ -1,0 +1,100 @@
+from typing import Dict, Any, List, Tuple
+
+from qutip import Qobj
+import numpy as np
+from bec.light.light_mode import LightMode
+from bec.params.transitions import Transition, TransitionType
+from bec.quantum_dot.kron_pad_utility import KronPad
+from bec.quantum_dot.protocols import CollapseProvider, ModeProvider
+
+
+class CollapseBuilder(CollapseProvider):
+    def __init__(
+        self,
+        gammas: Dict[str, float],
+        context: Dict[str, Any],
+        kron: KronPad,
+        mode_provider: ModeProvider,
+    ):
+        self._g = gammas
+        self._ctx = context
+        self._kron = kron
+        self._modes = mode_provider
+
+    def by_transition_and_source(
+        self, transition: Transition, source: TransitionType
+    ) -> Tuple[int, LightMode]:
+        """
+        Find the first mode matching a given transition and source.
+
+        Parameters
+        ----------
+        transition : Transition
+            The physical transition label (e.g., Transition.G_X1).
+        source : TransitionType
+            The origin of the mode (e.g., INTERNAL, EXTERNAL).
+
+        Returns
+        -------
+        (int, LightMode)
+            Tuple of (index in `modes`, the matching LightMode).
+
+        Raises
+        ------
+        ValueError
+            If no matching mode is found.
+        """
+        for i, m in enumerate(self._modes.modes):
+            if (
+                m.source == source
+                and getattr(m, "transition", None) == transition
+            ):
+                return i, m
+        raise ValueError(
+            f"No mode with transition {transition} and source {source}"
+        )
+
+    def qutip_collapse_ops(self, dims: List[int]) -> List[Qobj]:
+        # (reuse your logic; show one variant to keep concise)
+        i_xxx1 = self._modes.by_transition_and_source(
+            Transition.X1_XX, TransitionType.INTERNAL
+        )[0]
+        i_xxx2 = self._modes.by_transition_and_source(
+            Transition.X2_XX, TransitionType.INTERNAL
+        )[0]
+        i_x1g = self._modes.by_transition_and_source(
+            Transition.G_X1, TransitionType.INTERNAL
+        )[0]
+        i_x2g = self._modes.by_transition_and_source(
+            Transition.G_X2, TransitionType.INTERNAL
+        )[0]
+
+        ops = [
+            (
+                "s_mult",
+                np.sqrt(self._g["L_XX_X1"]),
+                self._kron.pad("s_XX_X1", "a+_dag", i_xxx1),
+            ),
+            (
+                "s_mult",
+                np.sqrt(self._g["L_XX_X2"]),
+                self._kron.pad("s_XX_X2", "a-_dag", i_xxx2),
+            ),
+            (
+                "s_mult",
+                np.sqrt(self._g["L_X1_G"]),
+                self._kron.pad("s_X1_G", "a-_dag", i_x1g),
+            ),
+            (
+                "s_mult",
+                np.sqrt(self._g["L_X2_G"]),
+                self._kron.pad("s_X2_G", "a+_dag", i_x2g),
+            ),
+        ]
+        from photon_weave.extra import interpreter
+
+        out = []
+        for op in ops:
+            arr = interpreter(op, self._ctx, dims)
+            out.append(Qobj(np.array(arr), dims=[dims, dims]).to("csr"))
+        return out

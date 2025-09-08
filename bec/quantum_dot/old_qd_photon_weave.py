@@ -7,6 +7,7 @@ from photon_weave.state.custom_state import CustomState
 from photon_weave.state.envelope import Envelope
 from qutip import Qobj
 
+
 from bec.helpers.converter import (
     energy_to_wavelength_nm,
     omega_from_lambda_nm,
@@ -413,6 +414,7 @@ class QuantumDotSystem(QuantumDotSystemBase):
         self,
         dims: List[int],
         classical_2g: Optional[ClassicalTwoPhotonDrive] = None,
+        tlist=None,
         wavelength_tolerance_nm: float = 1.0,
         **params,
     ):

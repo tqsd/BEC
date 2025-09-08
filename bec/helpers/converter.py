@@ -47,6 +47,23 @@ def energy_to_wavelength_nm(E_eV: float) -> float:
     return HC_eVnm / E_eV
 
 
+def wavelength_to_energy_eV(lambda_nm: float) -> float:
+    """
+    Convert wavelength in nanometers (nm) to photon energy in electronvolts (eV).
+
+    Parameters
+    ----------
+    lambda_nm : float
+        Wavelength in nanometers.
+
+    Returns
+    -------
+    float
+        Photon energy in electronvolts corresponding to the given wavelength.
+    """
+    return HC_eVnm / lambda_nm
+
+
 def omega_from_lambda_nm(lambda_nm: float) -> float:
     """
     Convert wavelength in nanometers to angular frequency ω [rad/s].
