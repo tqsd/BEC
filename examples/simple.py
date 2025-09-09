@@ -1,8 +1,11 @@
-# example_classical_drive_sim.py
+from math import sqrt, pi
 import numpy as np
+import matplotlib.pyplot as plt
 
 # --- your project imports (paths match what you showed) ---
 from bec.operators.qd_operators import QDState
+from bec.params.transitions import TransitionType
+from bec.plots.quick import plot_traces
 from bec.quantum_dot.dot import QuantumDot
 from bec.simulation.engine import SimulationEngine, SimulationConfig
 from bec.simulation.scenarios import ClassicalDriveScenario
@@ -60,22 +63,23 @@ def main():
         time_unit_s=1e-9,
         initial_state=QDState.G,
     )
-    print(qd.modes.modes)
-    # time_unit_s=1e-9 ⇒ simulation time unit is 1 ns
-
     # -----------------------------
     # 4) Classical two-photon drive
     # -----------------------------
     # QuTiP will pass *dimensionless* time t that we interpret in ns here
-    t0 = 5.0  # pulse center (ns)
-    sigma = 0.8  # pulse width (ns)
-    Omega0 = 6.0  # peak Rabi (dimensionless in sim units)
+    t0 = 0.5  # pulse center (ns)
+    sigma = 0.04  # pulse width (ns)
+
+    def omega0_for_area(sigma, area=np.pi / 2) -> float:
+        return float(area / (sigma * sqrt(2 * pi)))
+
+    Omega0 = omega0_for_area(sigma, area=np.pi / 2)  # ≈ 1.566
 
     def gaussian_rabi(t, _args=None):
         return Omega0 * np.exp(-0.5 * ((t - t0) / sigma) ** 2)
 
     drive = ClassicalTwoPhotonDrive(
-        omega=gaussian_rabi,  # <-- pass the function here
+        omega=gaussian_rabi,
         detuning=0.0,
         label="2g",
     )
@@ -84,7 +88,7 @@ def main():
     # -----------------------------
     # 5) Simulation config & engine
     # -----------------------------
-    tlist = np.linspace(0.0, 10.0, 501)  # 0 → 10 ns, 501 points
+    tlist = np.linspace(0.0, 2.0, 1001)  # 0 → 10 ns, 501 points
     # {0,1} photons per pol
     cfg = SimulationConfig(tlist=tlist, trunc_per_pol=2)
 
@@ -111,6 +115,7 @@ def main():
     print(f"  P_X1 = {P_X1:.4f}")
     print(f"  P_X2 = {P_X2:.4f}")
     print(f"  P_XX = {P_XX:.4f}")
+    print("max P_X2:", float(np.max(P_X2)))
 
     # If classical, show peak Ω(t) and pulse area
     if traces.classical and traces.omega is not None:
@@ -132,6 +137,13 @@ def main():
             f"  max N_V (any out) = {
                 max([np.max(x) for x in traces.out_V]) if traces.out_V else 0.0:.4e}"
         )
+
+    fig = plot_traces(
+        traces,
+        title=r"Biexciton classical 2$\gamma$ drive (Gaussian)",
+        save=None,  # e.g., "biexciton_2g.png"
+    )
+    plt.show()
 
 
 if __name__ == "__main__":

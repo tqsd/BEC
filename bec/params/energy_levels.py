@@ -42,10 +42,10 @@ class EnergyLevels:
     X1: float = field(init=False)
     X2: float = field(init=False)
     XX: float = field(init=False)
-    e_G_X1: Tuple[float, Transition] = field(init=False)
-    e_G_X2: Tuple[float, Transition] = field(init=False)
-    e_X1_XX: Tuple[float, Transition] = field(init=False)
-    e_X2_XX: Tuple[float, Transition] = field(init=False)
+    e_G_X1: Tuple[float, Transition, str] = field(init=False)
+    e_G_X2: Tuple[float, Transition, str] = field(init=False)
+    e_X1_XX: Tuple[float, Transition, str] = field(init=False)
+    e_X2_XX: Tuple[float, Transition, str] = field(init=False)
 
     def __post_init__(self) -> None:
         """
@@ -61,10 +61,10 @@ class EnergyLevels:
         self.X2 = self.exciton - self.fss / 2
         self.XX = self.biexciton
         self.binding_energy = (self.X1 + self.X2) - self.biexciton
-        self.e_G_X1 = (self.X1, Transition.G_X1)
-        self.e_G_X2 = (self.X2, Transition.G_X2)
-        self.e_X1_XX = (self.XX - self.X1, Transition.X1_XX)
-        self.e_X2_XX = (self.XX - self.X2, Transition.X2_XX)
+        self.e_G_X1 = (self.X1, Transition.G_X1, "G_X1")
+        self.e_G_X2 = (self.X2, Transition.G_X2, "G_X2")
+        self.e_X1_XX = (self.XX - self.X1, Transition.X1_XX, "X1_XX")
+        self.e_X2_XX = (self.XX - self.X2, Transition.X2_XX, "X2_XX")
 
     def compute_modes(self) -> List[LightMode]:
         """
@@ -83,6 +83,7 @@ class EnergyLevels:
                     energy_ev=t[0],
                     source=TransitionType.INTERNAL,
                     transition=t[1],
+                    label=t[2],
                 )
             )
         return modes

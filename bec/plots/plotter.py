@@ -1,454 +1,207 @@
-from dataclasses import dataclass
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Iterable, List, Optional, Any
+
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Optional, Sequence, Union, List
-from photon_weave.operation import Operation
-from photon_weave.state.custom_state import CustomState
-from photon_weave.state.fock import Fock
-from qutip import Qobj, mesolve, Options
+import matplotlib.gridspec as gridspec
+from matplotlib.axes import Axes
 
-from photon_weave.state.envelope import Envelope
-from photon_weave.state.composite_envelope import CompositeEnvelope
-from photon_weave.state.polarization import PolarizationLabel
+from .styles import StyleTheme, default_theme, build_color_map
+from .panels import (
+    draw_top_panel_classical,
+    draw_top_panel_quantum,
+    draw_mid_qd,
+    draw_bot_outputs,
+    legend_handles,
+)
 
-from bec.light.classical import ClassicalTwoPhotonDrive
-from bec.quantum_dot.qd_photon_weave import QuantumDotSystem
+# --- Duck-typed view of QDTraces (no hard import needed) ---
+# Expected fields on each traces-like object:
+#   t: np.ndarray
+#   classical: bool
+#   flying_labels: List[str]
+#   intrinsic_labels: List[str]
+#   qd: List[np.ndarray]     (length 4)
+#   fly_H, fly_V: List[np.ndarray]
+#   out_H, out_V: List[np.ndarray]
+#   omega: Optional[np.ndarray]
+#   area: Optional[np.ndarray]
 
 
 @dataclass
-class QDTraces:
-    t: np.ndarray
-    classical: bool
-    flying_labels: List[str]
-    intrinsic_labels: List[str]
-    qd: List[np.ndarray]  # [|G>, |X1>, |X2>, |XX>]
-    fly_H: List[np.ndarray]
-    fly_V: List[np.ndarray]
-    out_H: List[np.ndarray]
-    out_V: List[np.ndarray]
-    omega: Optional[np.ndarray] = None  # for classical drive
-    area: Optional[np.ndarray] = None  # for classical drive
+class PlotConfig:
+    show_top: bool = True
+    figsize: tuple = (9.2, 6.0)
+    right_legend_width: float = 0.48
+    titles: Optional[List[str]] = None
+    filename: Optional[str] = None
+    # palette offsets (if you want different color cycles)
+    inputs_offset: int = 0
+    outputs_offset: int = 0
 
 
-class QDPlotter:
-    """
-    One-shot runner/plotter for QuantumDotSystem simulations.
+@dataclass
+class QDPlotGrid:
+    """Compose side-by-side columns for multiple QDTraces objects."""
 
-    Usage:
-        plotter = QDPlotter(QD, classical_2g=DRIVE, tlist=np.linspace(0,10,500))
-        result = plotter.run_and_plot(filename="biexciton_column", show_top=True)
-    """
+    theme: StyleTheme = field(default_factory=default_theme)
+    cfg: PlotConfig = field(default_factory=PlotConfig)
 
-    def __init__(
-        self,
-        qd: QuantumDotSystem,
-        classical_2g: Optional[ClassicalTwoPhotonDrive] = None,
-        tlist: Optional[Union[Sequence[float], np.ndarray]] = None,
-        trunc_per_pol: int = 2,
-        time_label: str = "Time (ns)",
-    ):
-        self.qd = qd
-        self.classical_2g = classical_2g
-        self.tlist = (
-            np.asarray(tlist)
-            if tlist is not None
-            else np.linspace(0.0, 10.0, 500)
+    def render(self, traces_list: Iterable[Any]) -> plt.Figure:
+        datas = list(traces_list)
+        if not (1 <= len(datas) <= 3):
+            raise ValueError("QDPlotGrid currently supports 1–3 columns.")
+
+        # Build global color maps across all columns
+        all_flying = [
+            lbl for d in datas for lbl in getattr(d, "flying_labels", [])
+        ]
+        all_intrin = [
+            lbl for d in datas for lbl in getattr(d, "intrinsic_labels", [])
+        ]
+        fly_color = build_color_map(
+            all_flying, self.theme.palette_inputs, self.cfg.inputs_offset
         )
-        self.trunc_per_pol = int(trunc_per_pol)
-        self.time_label = time_label
-
-        # Will be filled during build steps
-        self.ENVS: list[Envelope] = []
-        self.DIMENSIONS: list[int] = []
-        self.DIMS: list[list[int]] = []
-        self.CSTATE: Optional[CompositeEnvelope] = None
-        self.rho0: Optional[Qobj] = None
-        self.H: Optional[list] = None
-        self.C_OPS: Optional[list[Qobj]] = None
-        self.P_ops: dict[str, Qobj] = {}
-        self.LM_ops: dict[str, Qobj] = {}
-
-        # indices for expectation unpacking
-        self.idx_qd = slice(0, 0)
-        self.idx_fly_T = slice(0, 0)
-        self.idx_fly_H = slice(0, 0)
-        self.idx_fly_V = slice(0, 0)
-        self.idx_out_T = slice(0, 0)
-        self.idx_out_H = slice(0, 0)
-        self.idx_out_V = slice(0, 0)
-
-        # build the space
-        self._build_space()
-
-    # ---------- build the composite space ----------
-    def _build_space(self):
-        self.ENVS = []
-
-        # 1) Build two envelopes per optical mode (H/V)
-        for mode in self.qd.modes:
-            env_h = Envelope()
-            env_h.fock.dimensions = self.trunc_per_pol  # H
-
-            env_v = Envelope()
-            env_v.polarization.state = PolarizationLabel.V
-            env_v.fock.dimensions = self.trunc_per_pol  # V
-
-            mode.containerHV = [env_h, env_v]
-            self.ENVS.extend([env_h, env_v])
-
-        # 2) Construct the composite with the envelopes (not strictly needed for reorder)
-        self.CSTATE = CompositeEnvelope(self.qd.dot, *self.ENVS)
-
-        # 3) IMPORTANT: capture fock objects ONCE and reuse
-        self.FOCKS = [env.fock for env in self.ENVS]
-
-        # 4) Build product basis over QD + FOCKS
-        self.CSTATE.combine(self.qd.dot, *self.FOCKS)
-
-        # 5) Reorder BEFORE expanding the dot (object identities still match)
-        self.CSTATE.reorder(self.qd.dot, *self.FOCKS)
-
-    def _build_qutip_space(self):
-        self.CSTATE.reorder(self.qd.dot, *self.FOCKS)
-
-        # 6) Now expand QD and compute dims
-        self.qd.dot.expand()
-
-        self.DIMENSIONS = [s.dimensions for s in [self.qd.dot, *self.FOCKS]]
-        self.DIMS = [self.DIMENSIONS, self.DIMENSIONS]
-
-        # 7) Initial state
-        self.rho0 = Qobj(
-            np.array(self.CSTATE.product_states[0].state), dims=self.DIMS
-        ).to("csr")
-
-    # ---------- Hamiltonians & collapse ----------
-
-    def _build_hamiltonian_and_collapse(self):
-        self.H = self.qd.build_hamiltonians(
-            dims=self.DIMENSIONS,
-            classical_2g=self.classical_2g,
-            tlist=self.tlist,
-        )
-        self.C_OPS = self.qd.qutip_collapse_operators(self.DIMENSIONS)
-
-    # ---------- projectors (QD + light modes) ----------
-    def _build_operators(self):
-        self.P_ops = self.qd.qutip_projectors(self.DIMENSIONS)
-        self.LM_ops = self.qd.qutip_light_mode_projectors(self.DIMENSIONS)
-
-    # ---------- assemble e_ops and indices ----------
-    def _make_eops(self):
-        # QD populations
-        qd_eops = [self.P_ops[k] for k in ("P_G", "P_X1", "P_X2", "P_XX")]
-
-        # Labels
-        self.flying_labels = [
-            m.label
-            for m in self.qd.modes
-            if getattr(m, "source", None) == "external"
-        ]
-        self.intrinsic_labels = [
-            m.label
-            for m in self.qd.modes
-            if getattr(m, "source", None) == "internal"
-        ]
-
-        # Flying (inputs)
-        fly_T = [
-            self.LM_ops[f"N[{lbl}]"]
-            for lbl in self.flying_labels
-            if f"N[{lbl}]" in self.LM_ops
-        ]
-        fly_H = [
-            self.LM_ops[f"N-[{lbl}]"]
-            for lbl in self.flying_labels
-            if f"N-[{lbl}]" in self.LM_ops
-        ]
-        fly_V = [
-            self.LM_ops[f"N+[{lbl}]"]
-            for lbl in self.flying_labels
-            if f"N+[{lbl}]" in self.LM_ops
-        ]
-
-        # Intrinsic (outputs)
-        out_T = [
-            self.LM_ops[f"N[{lbl}]"]
-            for lbl in self.intrinsic_labels
-            if f"N[{lbl}]" in self.LM_ops
-        ]
-        out_H = [
-            self.LM_ops[f"N-[{lbl}]"]
-            for lbl in self.intrinsic_labels
-            if f"N-[{lbl}]" in self.LM_ops
-        ]
-        out_V = [
-            self.LM_ops[f"N+[{lbl}]"]
-            for lbl in self.intrinsic_labels
-            if f"N+[{lbl}]" in self.LM_ops
-        ]
-
-        e_ops_list = [
-            op.to("csr")
-            for op in (qd_eops + fly_T + fly_H + fly_V + out_T + out_H + out_V)
-        ]
-
-        # store indices
-        i0 = 0
-        self.idx_qd = slice(i0, i0 + len(qd_eops))
-        i0 += len(qd_eops)
-        self.idx_fly_T = slice(i0, i0 + len(fly_T))
-        i0 += len(fly_T)
-        self.idx_fly_H = slice(i0, i0 + len(fly_H))
-        i0 += len(fly_H)
-        self.idx_fly_V = slice(i0, i0 + len(fly_V))
-        i0 += len(fly_V)
-        self.idx_out_T = slice(i0, i0 + len(out_T))
-        i0 += len(out_T)
-        self.idx_out_H = slice(i0, i0 + len(out_H))
-        i0 += len(out_H)
-        self.idx_out_V = slice(i0, i0 + len(out_V))
-        i0 += len(out_V)
-
-        return e_ops_list
-
-    # ---------- solve ----------
-    def _solve(self, e_ops_list):
-        opts = Options(nsteps=10000, rtol=1e-9, atol=1e-11, progress_bar="tqdm")
-        return mesolve(
-            self.H,
-            self.rho0,
-            self.tlist,
-            c_ops=self.C_OPS,
-            e_ops=e_ops_list,
-            options=opts,
+        out_color = build_color_map(
+            all_intrin, self.theme.palette_outputs, self.cfg.outputs_offset
         )
 
-    # ---------- plotting ----------
-    def _plot(self, result, filename: Optional[str], show_top: bool):
-        # unpack expectations
-        qd_traces = result.expect[self.idx_qd]
-        fly_T_traces = result.expect[self.idx_fly_T]
-        fly_H_traces = result.expect[self.idx_fly_H]
-        fly_V_traces = result.expect[self.idx_fly_V]
-        out_T_traces = result.expect[self.idx_out_T]
-        out_H_traces = result.expect[self.idx_out_H]
-        out_V_traces = result.expect[self.idx_out_V]
+        # Shared top limits for classical columns
+        have_classical = any(
+            getattr(d, "classical", False)
+            and getattr(d, "omega", None) is not None
+            for d in datas
+        )
+        Ωmax = max(
+            (
+                float(np.nanmax(d.omega))
+                for d in datas
+                if getattr(d, "omega", None) is not None
+            ),
+            default=1.0,
+        )
+        Amax = max(
+            (
+                float(np.nanmax(d.area))
+                for d in datas
+                if getattr(d, "area", None) is not None
+            ),
+            default=1.0,
+        )
 
-        # decide how many rows: with top panel or not
-        nrows = 3 if show_top else 2
-        fig_axes = plt.subplots(nrows, 1, figsize=(7, 2.2 * nrows), sharex=True)
-        if nrows == 3:
-            fig, (ax_top, ax_mid, ax_bot) = fig_axes
-        else:
-            fig, (ax_mid, ax_bot) = fig_axes
-            ax_top = None
+        # Layout
+        ncols = len(datas)
+        nrows = 3 if self.cfg.show_top else 2
+        fig = plt.figure(figsize=self.cfg.figsize, constrained_layout=True)
+        fig.set_constrained_layout_pads(
+            w_pad=0.02, h_pad=0.02, wspace=0.02, hspace=0.02
+        )
+        gs = gridspec.GridSpec(
+            nrows=nrows,
+            ncols=ncols + 1,
+            width_ratios=[1] * ncols + [self.cfg.right_legend_width],
+            figure=fig,
+        )
 
-        # ----- TOP panel -----
-        if show_top:
-            if self.classical_2g is not None:
-                # plot Omega(t) and pulse area
-                Omega_fn = self.classical_2g.qutip_coeff()
-                Omega_t = np.array([Omega_fn(t, {}) for t in self.tlist])
-                area_t = np.concatenate(
-                    [
-                        [0.0],
-                        np.cumsum(
-                            0.5
-                            * np.diff(self.tlist)
-                            * (Omega_t[1:] + Omega_t[:-1])
-                        ),
-                    ]
-                )
-                ax_top.plot(self.tlist, Omega_t, label=r"$\Omega(t)$")
-                ax_top_t = ax_top.twinx()
-                ax_top_t.plot(
-                    self.tlist, area_t, ls="--", alpha=0.85, label="area"
-                )
-                ax_top.set_ylabel(r"$\Omega(t)$")
-                ax_top_t.set_ylabel(r"$\int^t \Omega(t^\prime)\,dt^\prime$")
-                ax_top.grid(True, alpha=0.3)
-            else:
-                # plot flying mode photon numbers (H and V)
-                print("PLOTTING QUANTUM")
-                for k, lbl in enumerate(self.flying_labels):
-                    print("PLOTTING", lbl)
-                    if len(fly_H_traces) > k:
-                        ax_top.plot(
-                            self.tlist,
-                            fly_H_traces[k],
-                            label=f"{lbl} (H)",
-                            alpha=0.7,
-                        )
-                    if len(fly_V_traces) > k:
-                        ax_top.plot(
-                            self.tlist,
-                            fly_V_traces[k],
-                            ls="--",
-                            label=f"{lbl} (V)",
-                            alpha=0.7,
-                        )
-                ax_top.set_ylabel(r"$\langle N\rangle$ (in)")
-                if self.flying_labels:
-                    ax_top.legend(loc="best", fontsize=9, ncol=2)
-                ax_top.grid(True, alpha=0.3)
+        top_axes: List[Axes] = []
+        mid_axes: List[Axes] = []
+        bot_axes: List[Axes] = []
+        master_x = None
 
-        # ----- MID: QD populations -----
-        labels_qd = [
-            r"$|G\rangle$",
-            r"$|X_1\rangle$",
-            r"$|X_2\rangle$",
-            r"$|XX\rangle$",
-        ]
-        for lab, y in zip(labels_qd, qd_traces):
-            ax_mid.plot(self.tlist, y, label=lab)
-        ax_mid.set_ylabel("QD")
-        ax_mid.legend(loc="best", ncol=2, fontsize=9)
-        ax_mid.grid(True, alpha=0.3)
+        for j, d in enumerate(datas):
+            if self.cfg.show_top:
+                ax_top = fig.add_subplot(gs[0, j], sharex=master_x)
+                top_axes.append(ax_top)
+                if master_x is None:
+                    master_x = ax_top
+            mid_row = 1 if self.cfg.show_top else 0
+            ax_mid = fig.add_subplot(gs[mid_row, j], sharex=master_x)
+            ax_bot = fig.add_subplot(
+                gs[(2 if self.cfg.show_top else 1), j], sharex=master_x
+            )
+            mid_axes.append(ax_mid)
+            bot_axes.append(ax_bot)
 
-        # ----- BOT: intrinsic output photons -----
-        for k, lbl in enumerate(self.intrinsic_labels):
-            if len(out_H_traces) > k:
-                ax_bot.plot(self.tlist, out_H_traces[k], label=f"{lbl} (H)")
-            if len(out_V_traces) > k:
-                ax_bot.plot(
-                    self.tlist, out_V_traces[k], ls="--", label=f"{lbl} (V)"
-                )
-        ax_bot.set_xlabel(self.time_label)
-        ax_bot.set_ylabel(r"$\langle N\rangle$ (out)")
-        if self.intrinsic_labels:
-            ax_bot.legend(loc="best", fontsize=9, ncol=2)
-        ax_bot.grid(True, alpha=0.3)
+            # -- TOP --
+            if self.cfg.show_top:
+                is_first = j == 0
+                is_last = j == ncols - 1
+                if (
+                    getattr(d, "classical", False)
+                    and getattr(d, "omega", None) is not None
+                ):
+                    draw_top_panel_classical(
+                        ax_top,
+                        d.t,
+                        d.omega,
+                        d.area,
+                        Ωmax,
+                        Amax,
+                        is_first,
+                        is_last,
+                    )
+                else:
+                    draw_top_panel_quantum(
+                        ax_top,
+                        d.t,
+                        d.flying_labels,
+                        d.fly_H,
+                        d.fly_V,
+                        fly_color,
+                        is_first,
+                    )
+                if self.cfg.titles and j < len(self.cfg.titles):
+                    ax_top.set_title(self.cfg.titles[j], fontsize=11)
 
-        plt.tight_layout()
+            # -- MID (QD pops) --
+            draw_mid_qd(ax_mid, d.t, d.qd, self.theme, is_first_col=(j == 0))
+            if not self.cfg.show_top:
+                if self.cfg.titles and j < len(self.cfg.titles):
+                    ax_mid.set_title(self.cfg.titles[j], fontsize=11)
 
-        # Save if requested
-        if filename:
-            if filename.lower().endswith((".png", ".pdf")):
-                fig.savefig(
-                    filename,
-                    dpi=300 if filename.endswith(".png") else None,
-                    bbox_inches="tight",
-                )
-            else:
-                fig.savefig(f"{filename}.png", dpi=300, bbox_inches="tight")
-                fig.savefig(f"{filename}.pdf", bbox_inches="tight")
-        return fig
-
-    # ---------- public API ----------
-    def run_and_plot(
-        self, filename: Optional[str] = None, show_top: bool = True
-    ):
-        self._build_qutip_space()
-        self._build_hamiltonian_and_collapse()
-        self._build_operators()
-        e_ops_list = self._make_eops()
-        result = self._solve(e_ops_list)
-        fig = self._plot(result, filename=filename, show_top=show_top)
-        return result
-
-    def apply_operation(
-        self,
-        op: Operation,
-        *labels: Union[str, CustomState],
-        pol: Optional[str] = None,
-    ) -> None:
-        """
-        Apply `op` to the states addressed by each label.
-
-        Labels can be:
-        - a mode label string (e.g. "second") → applies to that mode's Fock spaces
-            (by default both H and V, or only one if `pol="H"` / `pol="V"`).
-        - "qd" or "dot" → applies to the QD CustomState
-        - a CustomState instance (advanced)
-
-        Notes:
-        - Call this BEFORE run_and_plot() so it modifies the initial product state.
-        - The order of Fock states is [H, V] when both are used.
-        """
-        if self.CSTATE is None:
-            raise ValueError("Composite space not built yet.")
-
-        def _targets_for_label(
-            lbl: Union[str, CustomState],
-        ) -> list[Union[Fock, CustomState]]:
-            # Direct CustomState
-            if isinstance(lbl, CustomState):
-                return [lbl]
-
-            # String labels
-            key = lbl.lower()
-            if key in ("qd", "dot"):
-                return [self.qd.dot]
-
-            # Optical mode
-            mode = self.qd.filter_modes(lbl)  # raises if not found
-            if not hasattr(mode, "containerHV") or mode.containerHV is None:
-                raise ValueError(
-                    f"Mode '{
-                        lbl}' has no containerHV. Make sure QDPlotter._build_space() has run."
-                )
-            env_h, env_v = mode.containerHV  # set in _build_space()
-
-            if pol is None:
-                return [env_h.fock, env_v.fock]  # default: H then V
-            p = pol.upper()
-            if p == "H":
-                return [env_h.fock]
-            if p == "V":
-                return [env_v.fock]
-            raise ValueError("pol must be None, 'H', or 'V'")
-
-        # Apply op for each label independently
-        targets = []
-        for lbl in labels:
-            targets.extend(_targets_for_label(lbl))
-        if len(targets) == 0:
-            print("No opeation is applied")
-        self.CSTATE.apply_operation(op, *targets)
-
-        # Invalidate rho0 if we already built the QuTiP objects
-        self.rho0 = None
-
-    def compute_traces(self, show_top: bool = True) -> QDTraces:
-        # build & solve (same steps as run_and_plot but without plotting)
-        self._build_qutip_space()
-        self._build_hamiltonian_and_collapse()
-        self._build_operators()
-        e_ops_list = self._make_eops()
-        result = self._solve(e_ops_list)
-
-        # extract expectations using your stored slices
-        qd_traces = result.expect[self.idx_qd]
-        fly_H = result.expect[self.idx_fly_H]
-        fly_V = result.expect[self.idx_fly_V]
-        out_H = result.expect[self.idx_out_H]
-        out_V = result.expect[self.idx_out_V]
-
-        # optional top-panel info for classical drive
-        Omega_t = area_t = None
-        if show_top and (self.classical_2g is not None):
-            Omega_fn = self.classical_2g.qutip_coeff()
-            Omega_t = np.array([Omega_fn(t, {}) for t in self.tlist])
-            area_t = np.concatenate(
-                [
-                    [0.0],
-                    np.cumsum(
-                        0.5 * np.diff(self.tlist) * (Omega_t[1:] + Omega_t[:-1])
-                    ),
-                ]
+            # -- BOT (outputs) --
+            draw_bot_outputs(
+                ax_bot,
+                d.t,
+                d.intrinsic_labels,
+                d.out_H,
+                d.out_V,
+                out_color,
+                is_first_col=(j == 0),
             )
 
-        return QDTraces(
-            t=self.tlist,
-            classical=(self.classical_2g is not None),
-            flying_labels=self.flying_labels,
-            intrinsic_labels=self.intrinsic_labels,
-            qd=[qd_traces[i] for i in range(4)],
-            fly_H=list(fly_H),
-            fly_V=list(fly_V),
-            out_H=list(out_H),
-            out_V=list(out_V),
-            omega=Omega_t,
-            area=area_t,
+            # Hide x tick labels except bottom row
+            if self.cfg.show_top:
+                top_axes[-1].tick_params(axis="x", labelbottom=False)
+            ax_mid.tick_params(axis="x", labelbottom=False)
+
+        # Shared legend
+        legend_ax = fig.add_subplot(gs[:, -1])
+        legend_ax.axis("off")
+        handles = legend_handles(self.theme, all_intrin, out_color)
+        legend_ax.legend(
+            handles=handles, loc="center", frameon=False, handlelength=2.4
         )
+
+        # Tidy ticks
+        all_axes = (
+            [*top_axes, *mid_axes, *bot_axes]
+            if self.cfg.show_top
+            else [*mid_axes, *bot_axes]
+        )
+        for ax in all_axes:
+            ax.locator_params(axis="x", nbins=5)
+            ax.locator_params(axis="y", nbins=4)
+
+        if self.cfg.filename:
+            fig.savefig(
+                self.cfg.filename,
+                dpi=(
+                    300
+                    if str(self.cfg.filename).lower().endswith(".png")
+                    else None
+                ),
+                bbox_inches="tight",
+            )
+        return fig

@@ -5,6 +5,7 @@ from typing import Optional, List, Dict
 import numpy as np
 from qutip import Qobj
 from bec.light.classical import ClassicalTwoPhotonDrive
+from bec.params.transitions import Transition, TransitionType
 from bec.quantum_dot import QuantumDot
 from bec.params.energy_levels import EnergyLevels
 from bec.simulation.qd_traces import QDTraces
@@ -109,12 +110,12 @@ class SimulationEngine:
         flying_labels = [
             m.label
             for m in qd.modes.modes
-            if getattr(m, "source", None) == "external"
+            if getattr(m, "source", None) == TransitionType.EXTERNAL
         ]
         intrinsic_labels = [
             m.label
             for m in qd.modes.modes
-            if getattr(m, "source", None) == "internal"
+            if getattr(m, "source", None) == TransitionType.INTERNAL
         ]
 
         return QDTraces(
