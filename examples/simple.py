@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 
 # --- your project imports (paths match what you showed) ---
 from bec.operators.qd_operators import QDState
-from bec.params.transitions import TransitionType
 from bec.plots.quick import plot_traces
 from bec.quantum_dot.dot import QuantumDot
 from bec.simulation.engine import SimulationEngine, SimulationConfig
@@ -17,6 +16,7 @@ from bec.params.dipole_params import DipoleParams
 
 # classical 2γ drive
 from bec.light.classical import ClassicalTwoPhotonDrive
+from bec.simulation.solvers import QutipMesolveBackend, MesolveOptions
 
 
 def main():
@@ -94,10 +94,22 @@ def main():
 
     engine = SimulationEngine()
 
+    backend = QutipMesolveBackend(
+        MesolveOptions(
+            nsteps=10000,
+            rtol=1e-9,
+            atol=1e-11,
+            progress_bar="tqdm",
+            store_final_state=True,
+        )
+    )
+    engine = SimulationEngine(solver=backend)
+
     # -----------------------------
     # 6) Run + collect traces
     # -----------------------------
-    traces = engine.run(qd, scenario, cfg)
+    traces, rho_final, rho_phot_final = engine.run_with_state(qd, scenario, cfg)
+    print(rho_phot_final)
 
     # -----------------------------
     # 7) Inspect results

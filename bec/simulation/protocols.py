@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Protocol, Optional, Sequence, List, Dict, Any
+from typing import Protocol, Optional, Sequence, List, Dict, Any, TYPE_CHECKING
 import numpy as np
 from qutip import Qobj
 from bec.light.classical import ClassicalTwoPhotonDrive
@@ -7,6 +7,14 @@ from photon_weave.state.envelope import Envelope
 from photon_weave.state.fock import Fock
 from photon_weave.state.composite_envelope import CompositeEnvelope
 from bec.quantum_dot import QuantumDot
+
+if TYPE_CHECKING:
+    # QuTiP’s result object; if the import path changes in your version,
+    # switch this to the correct one or just use `Any`.
+    # type: ignore[attr-defined]
+    from qutip.solver import Result as QutipResult
+else:
+    QutipResult = Any  # graceful fallback for runtime
 
 
 class Scenario(Protocol):
@@ -80,4 +88,4 @@ class SolverBackend(Protocol):
         tlist: np.ndarray,
         c_ops: list[Qobj],
         e_ops: list[Qobj],
-    ): ...
+    ) -> QutipResult: ...
