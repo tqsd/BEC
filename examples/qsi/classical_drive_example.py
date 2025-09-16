@@ -1,70 +1,125 @@
 """
-Example 01
--------------------
-Example with:
+Example: QD source via QSI (Gaussian envelope, prepare-from-scalar)
+-------------------------------------------------------------------
+- Registers ../../bec/qsi/classical.py (your QSI wrapper module)
+- Sets device & sim parameters
+- Uses a single-dimensional input state (truncation=1)
+- Sends a classical 2γ drive with a *Gaussian* envelope (JSON form)
+- Prints the channel response and basic info about returned Kraus ops
 """
 
 import numpy as np
-import uuid
+from scipy.constants import e as _e, hbar as _hbar, pi, c as _c
+
 from qsi.coordinator import Coordinator
 from qsi.state import State, StateProp
 
-from bec.light.envelopes import gaussian_to_tabulated
+from bec.qsi.utilities import (
+    apply_prepare_from_scalar,
+    stateprops_from_qd_diagnostics,
+)
 
-
-# Initiate the Coordinator
+# 1) Start the coordinator + register your wrapper module
 coordinator = Coordinator()
 
-# Start the module processes, before running the coordinator process
 qd_source = coordinator.register_component(
-    module="../../qsi/qd_source.py", runtime="python"
+    module="../../bec/qsi/classical.py",  # path to your QSI wrapper
+    runtime="python",
 )
 
-# Run the coordinator, when the coordinator starts, it automatically queries
-# all modules for the possible parameters to set. ('param_query')
+# 2) Spin up the coordinator; this triggers param_query on modules
 coordinator.run()
 
-# Set the parameters of the devices one by one
-# This is an example, this value is not actually used in the simulation
+# 3) Configure device/physics + sim params
 qd_source.set_param("exciton_eV", 1.35)
-qd_source.set_param("biexciton_eV", 2.7)
-qd_source.set_param("fss_eV", 0.1)
+qd_source.set_param("biexciton_eV", 2.70)  # example value
+qd_source.set_param("fss_eV", 0e-6)
 qd_source.set_param("dipole_moment_Cm", 3.0e-29)
-qd_source.set_param("cavity_Q", 1e4)
-qd_source.set_param("cavity_V_eff_um3", 1.0)
-qd_source.set_param("cavity_lambda_nm", 920.0)
-qd_source.set_param("cavity_n", 3.5)
 
-# Set all configured parameters to the device ('param_set')
+qd_source.set_param("cavity_Q", 5e4)
+qd_source.set_param("cavity_V_eff_um3", 0.5)
+qd_source.set_param("cavity_lambda_nm", 930.0)
+qd_source.set_param("cavity_n", 3.4)
+
+# Optional sim controls exposed by the wrapper
+qd_source.set_param("trunc_per_pol", 2)
+qd_source.set_param("time_unit_s", 1e-9)
+qd_source.set_param("t_start_s", 0.0)
+qd_source.set_param("t_stop_s", 4e-9)
+qd_source.set_param("num_t", 5001)
+
+# Optional plot controls
+qd_source.set_param("plot_show", "f")
+qd_source.set_param("plot_save", "test.png")
+
+# Push all configured params to the device (param_set)
 qd_source.send_params()
 
-# Initialize internal states if device has any ('state_init')
-
-
-state_one = State(
+# 4) Single-dimensional input state (acts as a scalar domain)
+scalar_input = State(
     StateProp(
-        state_type="light",
-        truncation=1,
-        wavelength=1550,
-        polarization="R",
-        bandwidth=1,
+        state_type="light",  # placeholder; wrapper doesn't use the content
+        truncation=1,  # <- IMPORTANT: 1D input so channel prepares output
+        wavelength=0,
+        polarization="H",
+        bandwidth=0,
     )
 )
-env_json = gaussian_to_tabulated(
-    t0=2e-9, sigma=0.5e-9, area=np.pi, nsigma=6.0, num=401, to_json=True
-)
+
+# 5) Build a Gaussian envelope in JSON form (as expected by envelope_from_json)
+sigma = 5e-11  # pulse width (s)
+t0 = 1e-9  # pulse center (s)
+omega0 = 1e10  # Rabi amplitude (rad/s)
+
+env_json = {
+    "type": "gaussian",
+    "t0": 1e-9,
+    "sigma": sigma,
+    "area": float(np.pi / omega0),
+}
+
+w_xxg = 2.70 * _e / _hbar
+detuning = 0e10
+wL = 0.5 * w_xxg + detuning
+
 drive = {
-    "omega0": 2e9,  # rad/s
+    "type": "classical_2g",  # wrapper accepts: classical_2g / 2g
+    "omega0": omega0,  # rad/s
     "detuning": 0.0,  # rad/s
-    "label": "tabulated π-pulse",
+    "label": "gaussian π-pulse",
+    "laser_omega": wL,
     "envelope": env_json,
 }
-response, operators = qd_source.channel_query(
-    state_one,
-    {"input": state_one.state_props[0].uuid},
+
+# 6) Request a channel; map the port name "input" to our scalar state UUID
+response, kraus_ops = qd_source.channel_query(
+    scalar_input,
+    {"input": scalar_input.state_props[0].uuid},
     signals=[drive],
 )
-print(response)
+
+print(response.get("diagnostics"))
+# 1) Build factor layout from diagnostics (order matches the QD registry)
+diag = response["diagnostics"]  # dict returned by the wrapper
+props = stateprops_from_qd_diagnostics(
+    diag,
+    trunc_per_pol=2,
+    default_bandwidth_Hz=1e9,  # fallback if none in diagnostics
+    pol_map={"+": "H", "−": "V"},
+)
+
+prepared = apply_prepare_from_scalar(
+    kraus_ops,
+    props,
+    normalize=True,
+)
+
+# 3) Inspect/container is ready
+for p in prepared.state_props:
+    print(p)
+print("Prepared state dims:", [p.truncation for p in prepared.state_props])
+print("Total Hilbert size:", prepared.dimensions)
+print("Trace(ρ):", np.trace(prepared.state).real)
 
 
 coordinator.terminate()

@@ -64,6 +64,44 @@ class Diagnostics(DiagnosticsProvider):
                 self._g.setdefault(k, 0.0)
 
     # ---------------- internals ----------------
+    def _mode_label_to_rate_per_s(self, label: str) -> float:
+        """
+        Map a mode label to an effective radiative rate in 1/s.
+        Falls back to 0.0 if unavailable.
+        """
+        g = self._g  # assumed in 1/s
+        # fine-structure resolved labels
+        if label == "X1_XX":
+            return float(g.get("L_XX_X1", 0.0))
+        if label == "X2_XX":
+            return float(g.get("L_XX_X2", 0.0))
+        if label == "G_X1":
+            return float(g.get("L_X1_G", 0.0))
+        if label == "G_X2":
+            return float(g.get("L_X2_G", 0.0))
+
+        # aggregated labels (fss == 0 case)
+        if label == "G_X":
+            r1 = float(g.get("L_X1_G", 0.0))
+            r2 = float(g.get("L_X2_G", 0.0))
+            return 0.5 * (r1 + r2) if (r1 > 0.0 and r2 > 0.0) else (r1 or r2)
+        if label == "X_XX":
+            r1 = float(g.get("L_XX_X1", 0.0))
+            r2 = float(g.get("L_XX_X2", 0.0))
+            return 0.5 * (r1 + r2) if (r1 > 0.0 and r2 > 0.0) else (r1 or r2)
+
+        # unknown label
+        return 0.0
+
+    def _mode_transitions_by_label(self) -> dict[str, str]:
+        """Return {label: transition_name} for each intrinsic mode."""
+        modes = getattr(self._modes, "intrinsic", None) or self._modes.modes
+        out: dict[str, str] = {}
+        for i, m in enumerate(modes):
+            label = getattr(m, "label", f"mode_{i}")
+            tr = getattr(m, "transition", None)
+            out[label] = getattr(tr, "name", "UNKNOWN")
+        return out
 
     def _delta_rad_per_s(self) -> float:
         """Compute splitting frequency.
@@ -321,23 +359,13 @@ class Diagnostics(DiagnosticsProvider):
     def mode_layout_summary(
         self, *, rho_phot: Qobj | np.ndarray | None = None
     ) -> Dict[str, Any]:
-        """Summarize mode layout and diagnostics.
-
-        Returns:
-            dict with:
-                - labels, overlaps, fss, central_frequencies
-                - if rho_phot is provided:
-                    - photon_numbers: {"N_early", "N_late"}
-                    - entanglement: {"log_negativity": E_N}
-                    - errors:
-                        - photon_numbers: {"early", "late"}
-                        - entanglement: {"log_negativity": err_log_neg}
-        """
+        # (unchanged prelude)
         modes = getattr(self._modes, "intrinsic", None)
         if modes is None:
             modes = self._modes.modes  # type: ignore[attr-defined]
         labels = [getattr(m, "label", f"mode_{i}") for i, m in enumerate(modes)]
 
+        # central frequencies as before
         summary: Dict[str, Any] = {
             "num_intrinsic_modes": len(modes),
             "labels": labels,
@@ -348,18 +376,34 @@ class Diagnostics(DiagnosticsProvider):
             "central_frequencies": self.central_frequencies_by_mode(),
         }
 
+        # --- NEW: expose raw decay rates (1/s) and per-mode bandwidths
+        # Raw rates dictionary (as provided), in 1/s:
+        summary["rates_per_s"] = {
+            "L_XX_X1": float(self._g.get("L_XX_X1", 0.0)),
+            "L_XX_X2": float(self._g.get("L_XX_X2", 0.0)),
+            "L_X1_G": float(self._g.get("L_X1_G", 0.0)),
+            "L_X2_G": float(self._g.get("L_X2_G", 0.0)),
+        }
+
+        # Per-mode bandwidths, keyed by mode label
+        # Convention: angular bandwidth ~ rate (rad/s), and Hz = (rad/s)/(2π).
+        bw_rad = {lab: self._mode_label_to_rate_per_s(lab) for lab in labels}
+        bw_hz = {lab: val / _TWO_PI for lab, val in bw_rad.items()}
+        summary["bandwidths_rad_s"] = bw_rad
+        summary["bandwidths_Hz"] = bw_hz
+
+        # Helpful for wiring: which transition each label represents
+        summary["mode_transitions"] = self._mode_transitions_by_label()
+
+        # --- existing extras when rho provided
         if rho_phot is not None:
-            # infer early/late/dims for LN
             early_facts, late_facts, _p, _m, dims_phot, _offset = (
                 infer_index_sets_from_registry(self.qd, rho_has_qd=False)
             )
-            # photon numbers and their errors
             pn_values, pn_errors = self._photon_number_metrics(rho_phot)
-            # log-negativity and its error
             E_N, err_ln = self._log_negativity_early_late(
                 rho_phot, list(dims_phot), list(early_facts), list(late_facts)
             )
-
             summary.update(
                 {
                     "photon_numbers": pn_values,

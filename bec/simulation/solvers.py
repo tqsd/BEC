@@ -13,7 +13,7 @@ class MesolveOptions:
     atol: float = 1e-11
     progress_bar: str = "tqdm"
     store_final_state: bool = False
-    max_step: float = 5e-3
+    max_step: float = 1e-2
 
 
 class QutipMesolveBackend(SolverBackend):

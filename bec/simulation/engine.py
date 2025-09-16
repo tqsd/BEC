@@ -99,19 +99,6 @@ class SimulationEngine:
         H = self.hams.compose(qd, dims, drive, time_unit_s=cfg.time_unit_s)
         C = self.collapses.compose(qd, dims, time_unit_s=cfg.time_unit_s)
 
-        # 2) Is the time-dependent coefficient large at the pulse?
-        coeff = drive.qutip_coeff(time_unit_s=cfg.time_unit_s)
-        Omega_probe = np.array([coeff(t, {}) for t in cfg.tlist])
-        print("Omega_peak:", Omega_probe.max())
-
-        # 1) Is the 2γ flip operator nonzero?
-        Hflip = qd.hams.classical_2g_flip(dims)
-        # Works on QuTiP 5
-        nnz = Hflip.data.as_scipy().nnz
-        print("Hflip nnz:", nnz, "norm:", Hflip.norm())
-        # 3) What time-dependent terms did we pass to QuTiP?
-        td_terms = [h for h in H if isinstance(h, list)]
-
         # 4) Observables + expectation layout
         P_qd = self.observables.compose_qd(
             qd, dims, time_unit_s=cfg.time_unit_s

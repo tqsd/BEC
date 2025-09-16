@@ -119,10 +119,17 @@ class ClassicalTwoPhotonDrive:
         *,
         omega0: float,
         detuning: float = 0.0,
+        laser_omega: float = 0.0,
         label: Optional[str] = None,
     ) -> "ClassicalTwoPhotonDrive":
         env = envelope_from_json(env_json)
-        return cls(envelope=env, omega0=omega0, detuning=detuning, label=label)
+        return cls(
+            envelope=env,
+            omega0=omega0,
+            detuning=detuning,
+            label=label,
+            laser_omega=laser_omega,
+        )
 
     @classmethod
     def from_callable(

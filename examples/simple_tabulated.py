@@ -1,3 +1,4 @@
+from scipy.constants import e as _e, hbar as _hbar, pi, c as _c
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -75,9 +76,14 @@ def main():
     # 4) Classical two-photon drive
     # -----------------------------
     # physical pulse params
-    sigma = 1e-10  # s
+    sigma = 1e-12  # s
     t0 = 1e-9  # s
     omega0 = 2e9  # rad/s
+
+    w_XXG = float(EL.XX) * _e / _hbar
+    detuning = 10e10
+    wl = 0.5 * w_XXG + detuning
+
     pulse_area = np.pi / omega0 * 0.80
 
     # tabulate a normalized Gaussian (window ±nsigma*sigma)
@@ -95,7 +101,11 @@ def main():
     # build the envelope and drive
     env_tab = TabulatedEnvelope(t=tuple(map(float, t)), y=tuple(map(float, y)))
     drive = ClassicalTwoPhotonDrive(
-        envelope=env_tab, omega0=omega0, detuning=0.0, label="2g"
+        envelope=env_tab,
+        omega0=omega0,
+        detuning=0.0,
+        label="2g",
+        laser_omega=wl,
     )
 
     # (optional) JSON round-trip
@@ -139,7 +149,6 @@ def main():
     early, late, plus_set, minus_set, dims, offset = (
         infer_index_sets_from_registry(qd, rho_has_qd=False)
     )
-    print("Resulting state")
     print(pretty_density(rho_phot_final, dims))
 
     fig = plot_traces(
