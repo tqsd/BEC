@@ -1,5 +1,4 @@
 from typing import Optional
-import numpy as np
 from bec.light.classical import ClassicalTwoPhotonDrive
 from bec.quantum_dot.dot import QuantumDot
 from bec.simulation.protocols import HamiltonianComposer
@@ -11,5 +10,8 @@ class DefaultHamiltonianComposer(HamiltonianComposer):
         qd: QuantumDot,
         dims: list[int],
         drive: Optional[ClassicalTwoPhotonDrive],
+        time_unit_s: float,
     ) -> list:
-        return qd.build_hamiltonians(dims=dims, classical_2g=drive)
+        return qd.build_hamiltonians(
+            dims=dims, classical_2g=drive, time_unit_s=time_unit_s
+        )

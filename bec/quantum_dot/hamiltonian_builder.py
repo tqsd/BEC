@@ -3,6 +3,8 @@ from photon_weave.extra import interpreter
 from qutip import Qobj
 import numpy as np
 
+from scipy.constants import e as _e, hbar as _hbar
+
 from bec.quantum_dot.kron_pad_utility import KronPad
 from bec.quantum_dot.protocols import HamiltonianProvider
 
@@ -20,9 +22,9 @@ class HamiltonianBuilder(HamiltonianProvider):
         arr = interpreter(expr, self._ctx, dims)
         return Qobj(np.array(arr), dims=[dims, dims]).to("csr")
 
-    def fss(self, dims: List[int]) -> Qobj:
-        Delta = self._EL.fss
-        Delta_p = self._EL.delta_prime
+    def fss(self, dims: List[int], time_unit_s: float) -> Qobj:
+        Delta = self._EL.fss * _e / _hbar * time_unit_s
+        Delta_p = self._EL.delta_prime * _e / _hbar * time_unit_s
         proj_X1 = self._ctx["s_X1_X1"]([])
         proj_X2 = self._ctx["s_X2_X2"]([])
         X1X2 = self._ctx["s_X1_X2"]([])
@@ -56,16 +58,15 @@ class HamiltonianBuilder(HamiltonianProvider):
             H_ints.append(h)
         return self._qobj(("add", *H_ints), dims)
 
-    def tpe(self, label: str, dims: List[int]) -> Qobj:
-        i = self._kron.by_label(label)
-        H_abs = self._kron.pad("s_G_XX", "aa", i)
-        H_em = self._kron.pad("s_XX_G", "aa_dag", i)
-        return self._qobj(("add", H_abs, H_em), dims)
-
     def classical_2g_flip(self, dims: List[int]) -> Qobj:
-        Hloc = self._ctx["s_G_XX"]([]) + self._ctx["s_XX_G"]([])
+        Hloc = 0.5 * (self._ctx["s_G_XX"]([]) + self._ctx["s_XX_G"]([]))
         return self._qobj(self._kron.pad(Hloc, "i", -1), dims)
 
     def classical_2g_detuning(self, dims: List[int]) -> Qobj:
-        Hloc = self._ctx["s_XX_XX"]([])
+        Hloc = 0.5 * self._ctx["s_XX_XX"]([])
+        return self._qobj(self._kron.pad(Hloc, "i", -1), dims)
+
+    def classical_2g_stark(self, dims: List[int]) -> Qobj:
+        # shift two-photon splitting: (+1/2)|XX><XX| - (1/2)|G><G|
+        Hloc = 0.5 * self._ctx["s_XX_XX"]([]) - 0.5 * self._ctx["s_G_G"]([])
         return self._qobj(self._kron.pad(Hloc, "i", -1), dims)

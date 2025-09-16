@@ -7,6 +7,7 @@ import numpy as np
 @dataclass
 class QDTraces:
     t: np.ndarray
+    time_unit_s: float
     classical: bool
     flying_labels: List[str]
     intrinsic_labels: List[str]

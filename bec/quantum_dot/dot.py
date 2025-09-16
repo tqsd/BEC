@@ -2,6 +2,7 @@ from typing import Any, Dict, List
 
 from photon_weave.state.custom_state import CustomState
 from qutip import Qobj
+from bec.light.detuning import two_photon_detuning_profile
 from bec.operators.qd_operators import QDState
 from bec.params.energy_levels import EnergyLevels
 from bec.quantum_dot.collapse_builder import CollapseBuilder
@@ -11,6 +12,7 @@ from bec.quantum_dot.hamiltonian_builder import HamiltonianBuilder
 from bec.quantum_dot.kron_pad_utility import KronPad
 from bec.quantum_dot.mode_registry import ModeRegistry
 from bec.quantum_dot.observables_builder import ObservablesBuilder
+from bec.quantum_dot.diagnostics import Diagnostics
 
 
 class QuantumDot:
@@ -23,12 +25,13 @@ class QuantumDot:
 
     It does **not** implement physics itself; instead, it wires together the
     following components:
-      - `ModeRegistry`             (intrinsic + external light modes)
-      - `QDContextBuilder`         (symbolic operator context for QD+Fock)
-      - `HamiltonianBuilder`       (FSS, light–matter, TPE, classical 2γ)
-      - `DecayModel`               (ω, Purcell, Γ computation → simulation units)
-      - `CollapseBuilder`          (Lindblad collapse operators)
-      - `ObservablesBuilder`       (QD projectors and per-mode projectors)
+      - `ModeRegistry`           (intrinsic + external light modes)
+      - `QDContextBuilder`       (symbolic operator context for QD+Fock)
+      - `HamiltonianBuilder`     (FSS, light–matter, TPE, classical 2γ)
+      - `DecayModel`             (ω, Purcell, Γ computation → simulation units)
+      - `CollapseBuilder`        (Lindblad collapse operators)
+      - `ObservablesBuilder`     (QD projectors and per-mode projectors)
+      - `Diagnostics`            (Diagnostics class)
 
     Parameters
     ----------
@@ -96,9 +99,7 @@ class QuantumDot:
             "X2": energy_levels.X2,
             "XX": energy_levels.XX,
         }
-        self.decay = DecayModel(
-            el_dict, cavity_params, dipole_params, time_unit_s
-        )
+        self.decay = DecayModel(el_dict, cavity_params, dipole_params)
 
         # build context + helpers
         self._context = self.context_builder.build()
@@ -116,6 +117,13 @@ class QuantumDot:
             self.gammas, self._context, self.kron, self.modes
         )
         self.obs = ObservablesBuilder(self._context, self.kron, self.modes)
+        self.diagnostics = Diagnostics(
+            energy_levels=self._EL,
+            gammas=self.gammas,
+            mode_provider=self.modes,
+            qd=self,
+            observable_provider=self.obs,
+        )
 
     def register_flying_mode(self, *_, **kwargs) -> None:
         """
@@ -152,39 +160,14 @@ class QuantumDot:
         )  # refresh after topology change
 
     def build_hamiltonians(
-        self, dims: List[int], classical_2g=None
+        self,
+        dims: List[int],
+        classical_2g=None,
+        *,
+        time_unit_s: float = 1.0,
     ) -> List[Qobj | list]:
-        """
-        Construct the full QuTiP Hamiltonian list for time-dependent solvers.
-
-        Returns a list formatted for `qutip.sesolve`/`mesolve`:
-          - The first element is a static `Qobj` (FSS term).
-          - Subsequent elements are `[Qobj, coeff]` pairs, where `coeff` is
-            either a scalar (constant) or a callable `coeff(t)`.
-
-        Parameters
-        ----------
-        dims : list[int]
-            Full composite dimensions (QD first, then two entries per light
-            mode for '+' and '−' polarizations). Must match the context layout.
-        classical_2g : Optional[ClassicalTwoPhotonDrive]
-            If provided, adds classical two-photon flip and detuning terms.
-
-        Returns
-        -------
-        list[Qobj | list]
-            Hamiltonian list suitable for QuTiP time-dependent solvers.
-
-        Notes
-        -----
-        - External modes marked `role == 'single'` contribute standard light–
-          matter interaction terms with envelope `f(t)`.
-        - Modes marked `role == 'tpe'` contribute the two-photon excitation
-          term with effective envelope ∝ `A * f(t)^2`, where `A` is composed
-          from `tpe_alpha_X1/X2` depending on eliminated arms.
-        """
-        H = [self.hams.fss(dims)]
-        # external modes (time-dependent)
+        H = [self.hams.fss(dims, time_unit_s)]
+        # external modes
         for m in [
             m
             for m in self.modes.modes
@@ -193,7 +176,7 @@ class QuantumDot:
             if m.role == "single":
                 Hk = self.hams.lmi(m.label, dims)
                 f = m.gaussian
-                H.append([Hk, lambda t, _f=f: float(_f(t))])
+                H.append([Hk, lambda t, _f=f, s=time_unit_s: float(_f(s * t))])
             elif m.role == "tpe":
                 Hk = self.hams.tpe(m.label, dims)
                 A = 0.0
@@ -202,21 +185,74 @@ class QuantumDot:
                 if "X2" in m.tpe_eliminated:
                     A += m.tpe_alpha_X2
                 f = m.gaussian
-                H.append([Hk, lambda t, _f=f, _A=A: float(_A * (_f(t) ** 2))])
+                H.append(
+                    [
+                        Hk,
+                        lambda t, _f=f, _A=A, s=time_unit_s: float(
+                            _A * (_f(s * t) ** 2)
+                        ),
+                    ]
+                )
         if classical_2g is not None:
             H.append(
-                [self.hams.classical_2g_flip(dims), classical_2g.qutip_coeff()]
+                [
+                    self.hams.classical_2g_flip(dims),
+                    classical_2g.qutip_coeff(time_unit_s=time_unit_s),
+                ]
             )
-            if classical_2g.detuning != 0.0:
+
+            det = classical_2g.detuning
+            if callable(det):
+                # det expects physical time [s] and returns Δ_phys(t) [rad/s]
                 H.append(
                     [
                         self.hams.classical_2g_detuning(dims),
-                        classical_2g.detuning,
+                        lambda t, det=det, s=time_unit_s: float(det(s * t))
+                        * s,  # -> solver units
                     ]
                 )
+            elif det != 0.0:
+                H.append(
+                    [
+                        self.hams.classical_2g_detuning(dims),
+                        # constant coefficient in solver units
+                        float(det) * time_unit_s,
+                    ]
+                )
+
+            # optional Stark term if you set drive.stark_kappa
+            kappa = getattr(classical_2g, "stark_kappa", 0.0)
+            if kappa:
+                env = classical_2g.envelope
+                H.append(
+                    [
+                        self.hams.classical_2g_stark(dims),
+                        lambda t, s=time_unit_s, _e=env, _k=kappa: float(
+                            _k * (_e(s * t) ** 2)
+                        )
+                        * s,  # rad/s -> solver units
+                    ]
+                )
+        # if classical_2g is not None:
+        #    # scale classical two-photon drive
+        #    H.append(
+        #        [
+        #            self.hams.classical_2g_flip(dims),
+        #            classical_2g.qutip_coeff(time_unit_s=time_unit_s),
+        #        ]
+        #    )
+        #    if classical_2g.detuning != 0.0:
+        #        H.append(
+        #            [
+        #                self.hams.classical_2g_detuning(dims),
+        #                classical_2g.detuning * time_unit_s,
+        #            ]
+        #        )
         return H
 
-    def qutip_collapse_operators(self, dims: List[int]) -> List[Qobj]:
+    def qutip_collapse_operators(
+        self, dims: List[int], time_unit_s: float = 1.0
+    ) -> List[Qobj]:
         """
         Build Lindblad collapse operators as `Qobj` for the current mode
         layout.
@@ -238,7 +274,7 @@ class QuantumDot:
         - Operator placement across modes/polarizations follows the registry
           (intrinsic labels like 'XX<->X1', 'X1<->G', etc.).
         """
-        return self.collapses.qutip_collapse_ops(dims)
+        return self.collapses.qutip_collapse_ops(dims, time_unit_s)
 
     def qutip_projectors(self, dims: List[int]) -> Dict[str, Qobj]:
         """

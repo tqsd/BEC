@@ -49,24 +49,27 @@ class HamiltonianComposer(Protocol):
         qd: QuantumDot,
         dims: list[int],
         drive: Optional[ClassicalTwoPhotonDrive],
+        time_unit_s: float,
     ) -> list: ...
 
 
 class CollapseComposer(Protocol):
     """Build collapse operators."""
 
-    def compose(self, qd: QuantumDot, dims: list[int]) -> list[Qobj]: ...
+    def compose(
+        self, qd: QuantumDot, dims: list[int], time_unit_s: float
+    ) -> list[Qobj]: ...
 
 
 class ObservableComposer(Protocol):
     """Build projectors/observables and return (qd_proj, lm_proj) dicts."""
 
     def compose_qd(
-        self, qd: QuantumDot, dims: list[int]
+        self, qd: QuantumDot, dims: list[int], time_unit_s: float
     ) -> Dict[str, Qobj]: ...
 
     def compose_lm(
-        self, qd: QuantumDot, dims: list[int]
+        self, qd: QuantumDot, dims: list[int], time_unit_s: float
     ) -> Dict[str, Qobj]: ...
 
 

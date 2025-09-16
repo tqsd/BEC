@@ -5,6 +5,7 @@ Quantum Dot, which can be excited by classical laser
 from dataclasses import dataclass
 
 from qsi.qsi import QSI
+from bec.simulation import QDSimulator
 from qsi.helpers import numpy_to_json, pretty_print_dict
 from qsi.state import State, StateProp
 import time
@@ -163,6 +164,10 @@ def channel_query(msg):
         QD = QuantumDotSystem(
             EL, initial_state=QDState.G, cavity_params=CP, dipole_params=DP
         )
+        tlist = np.linspace(0,10,500)
+        sim = QDSimulator(QD, classical_2g=drive, tlist=tlist)
+        
+
 
     except Exception as e:
         return {

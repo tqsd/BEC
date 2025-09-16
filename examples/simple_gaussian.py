@@ -1,11 +1,15 @@
-from math import sqrt, pi
+from scipy.constants import e as _e, hbar as _hbar, pi, c as _c
 import numpy as np
 import matplotlib.pyplot as plt
 
-# --- your project imports (paths match what you showed) ---
+from bec.channel.factory import ChannelFactory
+from bec.channel.io import ChannelIO
+from bec.helpers.pprint import pretty_density
+from bec.light.envelopes import GaussianEnvelope
 from bec.operators.qd_operators import QDState
 from bec.plots.quick import plot_traces
 from bec.quantum_dot.dot import QuantumDot
+from bec.quantum_dot.helpers import infer_index_sets_from_registry
 from bec.simulation.engine import SimulationEngine, SimulationConfig
 from bec.simulation.scenarios import ClassicalDriveScenario
 
@@ -19,13 +23,19 @@ from bec.light.classical import ClassicalTwoPhotonDrive
 from bec.simulation.solvers import QutipMesolveBackend, MesolveOptions
 
 
+def detuning_nm(EL, detuning=0.0):
+    w_XXG = float(EL.XX) * _e / _hbar
+    wl = 0.5 * w_XXG + detuning
+    return (2 * pi * _c / wl) * 1e9
+
+
 def main():
     # -----------------------------
     # 1) Energy levels (in eV)
     # -----------------------------
     # Example numbers typical for InGaAs QDs; tweak for your sample:
     EXCITON_E = 1.300  # exciton center (eV)
-    FSS = 10e-6  # fine-structure splitting 10 μeV = 1e-5 eV
+    FSS = 0  # 1e-6  # fine-structure splitting 10 μeV = 1e-5 eV
     DELTA_PRIME = 0.0  # anisotropic mixing term (eV), set if needed
     # Set biexciton such that binding energy is ~3 meV: E_bind ≈ (X1 + X2) - E_XX
     X1 = EXCITON_E + 0.5 * FSS
@@ -50,7 +60,7 @@ def main():
         n=3.4,  # refractive index
     )
 
-    # Dipole moment ~ 10 Debye (1 D ≈ 3.33564e-30 C·m)
+    # Dipole moment ~ 10 Debye (e D ≈ 3.33564e-30 C·m)
     DP = DipoleParams(dipole_moment_Cm=10.0 * 3.33564e-30)
 
     # -----------------------------
@@ -63,44 +73,55 @@ def main():
         time_unit_s=1e-9,
         initial_state=QDState.G,
     )
+    # scalar overlap(s)
+    print("late |Λ| =", qd.diagnostics.effective_overlap("late"))
+    print("early |Λ| =", qd.diagnostics.effective_overlap("early"))
+
+    # full summary
     # -----------------------------
     # 4) Classical two-photon drive
     # -----------------------------
-    # QuTiP will pass *dimensionless* time t that we interpret in ns here
-    t0 = 0.5  # pulse center (ns)
-    sigma = 0.04  # pulse width (ns)
+    sigma = 1e-11  # s
+    t0 = 1e-9  # s
+    omega0 = 1e10  # rad/s
+    w_XXG = float(EL.XX) * _e / _hbar
+    detuning = 5e10
+    wL = 0.5 * w_XXG + detuning
+    pulse_area = np.pi / omega0 * 1
 
-    def omega0_for_area(sigma, area=np.pi / 2) -> float:
-        return float(area / (sigma * sqrt(2 * pi)))
+    lam_nm = detuning_nm(EL, detuning=detuning)
+    print(f"Laser wavelength = {lam_nm:.2f} nm")
+    env = GaussianEnvelope(t0=t0, sigma=sigma, area=pulse_area)
 
-    Omega0 = omega0_for_area(sigma, area=np.pi / 2)  # ≈ 1.566
-
-    def gaussian_rabi(t, _args=None):
-        return Omega0 * np.exp(-0.5 * ((t - t0) / sigma) ** 2)
-
+    # Build the drive: Ω(t) = ω0 * env(t)
     drive = ClassicalTwoPhotonDrive(
-        omega=gaussian_rabi,
+        envelope=env,
+        omega0=omega0,
         detuning=0.0,
         label="2g",
+        laser_omega=wL,
     )
+
+    # (optional) JSON round-trip if you need to persist it
     scenario = ClassicalDriveScenario(drive=drive)
 
     # -----------------------------
     # 5) Simulation config & engine
     # -----------------------------
-    tlist = np.linspace(0.0, 2.0, 1001)  # 0 → 10 ns, 501 points
+    tlist = np.linspace(0.0, 20.0, 20001)  # 0 → 10 ns, 501 points
     # {0,1} photons per pol
-    cfg = SimulationConfig(tlist=tlist, trunc_per_pol=2)
+    cfg = SimulationConfig(tlist=tlist, trunc_per_pol=2, time_unit_s=1e-10)
 
     engine = SimulationEngine()
 
     backend = QutipMesolveBackend(
         MesolveOptions(
-            nsteps=10000,
+            nsteps=20000,
             rtol=1e-9,
             atol=1e-11,
             progress_bar="tqdm",
             store_final_state=True,
+            max_step=1e-2,
         )
     )
     engine = SimulationEngine(solver=backend)
@@ -109,46 +130,19 @@ def main():
     # 6) Run + collect traces
     # -----------------------------
     traces, rho_final, rho_phot_final = engine.run_with_state(qd, scenario, cfg)
-    print(rho_phot_final)
 
-    # -----------------------------
-    # 7) Inspect results
-    # -----------------------------
-    print("=== Simulation summary ===")
-    print(f"classical drive?     : {traces.classical}")
-    print(f"flying input labels  : {traces.flying_labels}")
-    print(f"intrinsic out labels : {traces.intrinsic_labels}")
-    print(f"t axis (ns)          : {traces.t.shape} points")
+    print(qd.diagnostics.mode_layout_summary(rho_phot=rho_phot_final))
+    factory = ChannelFactory()
+    src = factory.from_photonic_state_prepare_from_scalar(rho_phot_final)
 
-    # Final QD populations (P_G, P_X1, P_X2, P_XX at final time)
-    P_G, P_X1, P_X2, P_XX = [arr[-1] for arr in traces.qd]
-    print("\nFinal QD populations:")
-    print(f"  P_G  = {P_G:.4f}")
-    print(f"  P_X1 = {P_X1:.4f}")
-    print(f"  P_X2 = {P_X2:.4f}")
-    print(f"  P_XX = {P_XX:.4f}")
-    print("max P_X2:", float(np.max(P_X2)))
+    ChannelIO.save_npz("biexciton_source.npz", src)
+    infer_index_sets_from_registry(qd)
 
-    # If classical, show peak Ω(t) and pulse area
-    if traces.classical and traces.omega is not None:
-        print("\nClassical panel:")
-        print(f"  max Ω(t) = {np.max(traces.omega):.4f}")
-        if traces.area is not None:
-            print(f"  final pulse area ≈ {traces.area[-1]:.4f}")
-
-    # Example: total photon numbers on the first intrinsic output mode (if present)
-    if traces.intrinsic_labels:
-        print("\nExample output mode:", traces.intrinsic_labels[0])
-        # The corresponding traces are in out_H/out_V with matching order of intrinsic_labels
-        # Here we just show maxima across all intrinsic modes as a quick glance:
-        print(
-            f"  max N_H (any out) = {
-                max([np.max(x) for x in traces.out_H]) if traces.out_H else 0.0:.4e}"
-        )
-        print(
-            f"  max N_V (any out) = {
-                max([np.max(x) for x in traces.out_V]) if traces.out_V else 0.0:.4e}"
-        )
+    early, late, plus_set, minus_set, dims, offset = (
+        infer_index_sets_from_registry(qd, rho_has_qd=False)
+    )
+    print("Resulting state")
+    print(pretty_density(rho_phot_final, dims))
 
     fig = plot_traces(
         traces,

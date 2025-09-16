@@ -65,6 +65,8 @@ class EnergyLevels:
         self.e_G_X2 = (self.X2, Transition.G_X2, "G_X2")
         self.e_X1_XX = (self.XX - self.X1, Transition.X1_XX, "X1_XX")
         self.e_X2_XX = (self.XX - self.X2, Transition.X2_XX, "X2_XX")
+        self.e_G_X = (self.X2, Transition.G_X, "G_X")
+        self.e_X_XX = (self.XX - self.X1, Transition.X_XX, "X_XX")
 
     def compute_modes(self) -> List[LightMode]:
         """
@@ -77,15 +79,26 @@ class EnergyLevels:
             filled and `source=TransitionType.INTERNAL`.
         """
         modes: List[LightMode] = []
-        for t in [self.e_G_X1, self.e_G_X2, self.e_X1_XX, self.e_X2_XX]:
-            modes.append(
-                LightMode(
-                    energy_ev=t[0],
-                    source=TransitionType.INTERNAL,
-                    transition=t[1],
-                    label=t[2],
+        if self.fss == 0:
+            for t in [self.e_G_X, self.e_X_XX]:
+                modes.append(
+                    LightMode(
+                        energy_ev=t[0],
+                        source=TransitionType.INTERNAL,
+                        transition=t[1],
+                        label=t[2],
+                    )
                 )
-            )
+        else:
+            for t in [self.e_G_X1, self.e_G_X2, self.e_X1_XX, self.e_X2_XX]:
+                modes.append(
+                    LightMode(
+                        energy_ev=t[0],
+                        source=TransitionType.INTERNAL,
+                        transition=t[1],
+                        label=t[2],
+                    )
+                )
         return modes
 
     def exciton_rotation_params(self):

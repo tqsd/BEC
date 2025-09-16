@@ -37,6 +37,14 @@ class ModeRegistry(ModeProvider):
         self.THETA, self.PHI = rotation_params
 
     @property
+    def intrinsic(self) -> List[LightMode]:
+        return self._intrinsic
+
+    @property
+    def external(self) -> List[LightMode]:
+        return self._external
+
+    @property
     def modes(self) -> List[LightMode]:
         """
         All registered modes (intrinsic first, then external).

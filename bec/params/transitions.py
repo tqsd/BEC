@@ -6,6 +6,8 @@ class Transition(Enum):
     G_X2 = 1
     X1_XX = 2
     X2_XX = 3
+    X_XX = 4
+    G_X = 5
 
 
 class TransitionType(Enum):

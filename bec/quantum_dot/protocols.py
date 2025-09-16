@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Protocol, Tuple
+from typing import Any, Dict, List, Literal, Protocol, Tuple, Union
 from qutip import Qobj
 from bec.light.light_mode import LightMode
 from bec.params.transitions import Transition, TransitionType
@@ -20,6 +20,20 @@ class ModeProvider(Protocol):
         """
         All available modes exposed by the provider, typically ordered as
         intrinsic first, then external.
+        """
+        ...
+
+    @property
+    def intrinsic(self) -> List[LightMode]:
+        """
+        All intrinsic available modes exposed by the provider
+        """
+        ...
+
+    @property
+    def external(self) -> List[LightMode]:
+        """
+        All external available modes exposed by the provider
         """
         ...
 
@@ -58,15 +72,23 @@ class ModeProvider(Protocol):
 
 
 class HamiltonianProvider(Protocol):
-    def fss(self, dims: List[int]) -> Qobj: ...
-    def classical_2g_flig(self, dims: List[int]) -> Qobj: ...
+    def fss(self, dims: List[int], time_unit_s: float) -> Qobj: ...
+    def classical_2g_flip(self, dims: List[int]) -> Qobj: ...
     def classical_2g_detuning(self, dims: List[int]) -> Qobj: ...
 
 
 class CollapseProvider(Protocol):
-    def qutip_collapse_operators(self, dims: List[int]) -> List[Qobj]: ...
+    def qutip_collapse_ops(self, dims: List[int]) -> List[Qobj]: ...
 
 
 class ObservableProvider(Protocol):
     def qd_projectors(self, dims: List[int]) -> Dict[str, Qobj]: ...
     def light_mode_projectors(self, dims: List[int]) -> Dict[str, Qobj]: ...
+
+
+class DiagnosticsProvider(Protocol):
+    def effective_overlap(
+        self, which: Literal["early", "late", "avg"]
+    ) -> float: ...
+
+    def mode_layout_summary(self) -> Dict[str, Any]: ...

@@ -9,12 +9,10 @@ class DecayModel:
         energy_levels_dict: Dict[str, float],
         cavity_params,
         dipole_params,
-        time_unit_s: float,
     ):
         self.el = energy_levels_dict
         self.cavity = cavity_params
         self.dipole = dipole_params
-        self.time_unit_s = time_unit_s
         if not self.dipole:
             raise ValueError("DipoleParams required to compute gammas.")
 
@@ -44,7 +42,7 @@ class DecayModel:
         def gamma(Ei, Ef):
             w = self._omega(Ei, Ef)
             g = self._gamma0(w, mu) * (1.0 + self._purcell(w))  # 1/s
-            return g * self.time_unit_s  # 1 / sim_time_unit
+            return g
 
         el = self.el
         return {

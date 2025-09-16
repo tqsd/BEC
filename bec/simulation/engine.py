@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 import numpy as np
 from qutip import Qobj
 from bec.light.classical import ClassicalTwoPhotonDrive
+from bec.light.detuning import two_photon_detuning_profile
 from bec.params.transitions import Transition, TransitionType
 from bec.quantum_dot import QuantumDot
 from bec.simulation.qd_traces import QDTraces
@@ -32,6 +33,7 @@ from .protocols import (
 class SimulationConfig:
     tlist: np.ndarray
     trunc_per_pol: int = 2
+    time_unit_s: float = 1.0
 
 
 class SimulationEngine:
@@ -60,77 +62,6 @@ class SimulationEngine:
         self.layout = layout or DefaultExpectationLayout()
         self.solver = solver or QutipMesolveBackend()
 
-    def run(
-        self, qd: QuantumDot, scenario: Scenario, cfg: SimulationConfig
-    ) -> QDTraces:
-        # 1) install modes / classical drive
-        scenario.prepare(qd)
-        drive = scenario.classical_drive()
-
-        # 2) build space + rho0
-        envs, focks, cstate = self.space.build_space(qd, cfg.trunc_per_pol)
-        dims, dims2, rho0 = self.space.build_qutip_space(cstate, qd.dot, focks)
-
-        # 3) Hamiltonians + collapses
-        H = self.hams.compose(qd, dims, drive)
-        C = self.collapses.compose(qd, dims)
-
-        # 4) Observables + expectation layout
-        P_qd = self.observables.compose_qd(qd, dims)
-        P_lm = self.observables.compose_lm(qd, dims)
-        e_ops, idx = self.layout.select(P_qd, P_lm, qd)
-
-        # 5) Solve
-        result = self.solver.solve(H, rho0, cfg.tlist, C, e_ops)
-
-        # 6) Pack as QDTraces (same keys you used)
-        qd_tr = result.expect[idx["qd"]]
-        fly_H = result.expect[idx["fly_H"]]
-        fly_V = result.expect[idx["fly_V"]]
-        out_H = result.expect[idx["out_H"]]
-        out_V = result.expect[idx["out_V"]]
-        # not stored in QDTraces originally, but ok to ignore/extend
-        fly_T = result.expect[idx["fly_T"]]
-
-        # optional classical panel traces
-        Omega_t = area_t = None
-        if drive is not None:
-            coeff = drive.qutip_coeff()
-            Omega_t = np.array([coeff(t, {}) for t in cfg.tlist])
-            area_t = np.concatenate(
-                [
-                    [0.0],
-                    np.cumsum(
-                        0.5 * np.diff(cfg.tlist) * (Omega_t[1:] + Omega_t[:-1])
-                    ),
-                ]
-            )
-
-        flying_labels = [
-            m.label
-            for m in qd.modes.modes
-            if getattr(m, "source", None) == TransitionType.EXTERNAL
-        ]
-        intrinsic_labels = [
-            m.label
-            for m in qd.modes.modes
-            if getattr(m, "source", None) == TransitionType.INTERNAL
-        ]
-
-        return QDTraces(
-            t=cfg.tlist,
-            classical=(drive is not None),
-            flying_labels=flying_labels,
-            intrinsic_labels=intrinsic_labels,
-            qd=[qd_tr[i] for i in range(4)],
-            fly_H=list(fly_H),
-            fly_V=list(fly_V),
-            out_H=list(out_H),
-            out_V=list(out_V),
-            omega=Omega_t,
-            area=area_t,
-        )
-
     def run_with_state(
         self,
         qd: QuantumDot,
@@ -151,13 +82,43 @@ class SimulationEngine:
         envs, focks, cstate = self.space.build_space(qd, cfg.trunc_per_pol)
         dims, dims2, rho0 = self.space.build_qutip_space(cstate, qd.dot, focks)
 
+        if drive is not None:
+            drive = drive.with_cached_tlist(cfg.tlist)
+            t_solver, Delta_eff_solver = two_photon_detuning_profile(
+                qd._EL, drive, cfg.time_unit_s
+            )
+            if Delta_eff_solver is not None:
+                t_phys = t_solver * cfg.time_unit_s
+                Delta_eff_phys = Delta_eff_solver / cfg.time_unit_s
+
+                def detuning_fn(t_phys_scalar, t=t_phys, y=Delta_eff_phys):
+                    return float(np.interp(t_phys_scalar, t, y))
+
+                drive = drive.with_detuning(detuning_fn)
         # 3) Hamiltonians + collapses
-        H = self.hams.compose(qd, dims, drive)
-        C = self.collapses.compose(qd, dims)
+        H = self.hams.compose(qd, dims, drive, time_unit_s=cfg.time_unit_s)
+        C = self.collapses.compose(qd, dims, time_unit_s=cfg.time_unit_s)
+
+        # 2) Is the time-dependent coefficient large at the pulse?
+        coeff = drive.qutip_coeff(time_unit_s=cfg.time_unit_s)
+        Omega_probe = np.array([coeff(t, {}) for t in cfg.tlist])
+        print("Omega_peak:", Omega_probe.max())
+
+        # 1) Is the 2γ flip operator nonzero?
+        Hflip = qd.hams.classical_2g_flip(dims)
+        # Works on QuTiP 5
+        nnz = Hflip.data.as_scipy().nnz
+        print("Hflip nnz:", nnz, "norm:", Hflip.norm())
+        # 3) What time-dependent terms did we pass to QuTiP?
+        td_terms = [h for h in H if isinstance(h, list)]
 
         # 4) Observables + expectation layout
-        P_qd = self.observables.compose_qd(qd, dims)
-        P_lm = self.observables.compose_lm(qd, dims)
+        P_qd = self.observables.compose_qd(
+            qd, dims, time_unit_s=cfg.time_unit_s
+        )
+        P_lm = self.observables.compose_lm(
+            qd, dims, time_unit_s=cfg.time_unit_s
+        )
         e_ops, idx = self.layout.select(P_qd, P_lm, qd)
 
         # 5) Solve
@@ -171,11 +132,14 @@ class SimulationEngine:
         out_V = result.expect[idx["out_V"]]
         fly_T = result.expect[idx["fly_T"]]
 
-        # optional classical panel
         Omega_t = area_t = None
         if drive is not None:
-            coeff = drive.qutip_coeff()
-            Omega_t = np.array([coeff(t, {}) for t in cfg.tlist])
+            # Tell the drive what 1.0 solver time unit equals in seconds
+            coeff = drive.qutip_coeff(time_unit_s=cfg.time_unit_s)
+
+            # Ω_solver(t') already includes the time scaling (so that ∫Ω_solver dt' = ∫Ω_phys dt_phys)
+            Omega_t = np.array([coeff(t, {}) for t in cfg.tlist], dtype=float)
+
             area_t = np.concatenate(
                 [
                     [0.0],
@@ -198,6 +162,7 @@ class SimulationEngine:
 
         traces = QDTraces(
             t=cfg.tlist,
+            time_unit_s=cfg.time_unit_s,
             classical=(drive is not None),
             flying_labels=flying_labels,
             intrinsic_labels=intrinsic_labels,

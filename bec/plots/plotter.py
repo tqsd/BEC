@@ -16,17 +16,31 @@ from .panels import (
     legend_handles,
 )
 
-# --- Duck-typed view of QDTraces (no hard import needed) ---
-# Expected fields on each traces-like object:
-#   t: np.ndarray
-#   classical: bool
-#   flying_labels: List[str]
-#   intrinsic_labels: List[str]
-#   qd: List[np.ndarray]     (length 4)
-#   fly_H, fly_V: List[np.ndarray]
-#   out_H, out_V: List[np.ndarray]
-#   omega: Optional[np.ndarray]
-#   area: Optional[np.ndarray]
+# ---------------------------------------------------------------------
+# Time-unit helpers
+# ---------------------------------------------------------------------
+
+_UNIT_SCALE = {
+    "s": 1.0,
+    "ms": 1e-3,
+    "us": 1e-6,
+    "ns": 1e-9,
+    "ps": 1e-12,
+    "fs": 1e-15,
+}
+
+
+def _choose_time_unit(max_seconds: float) -> str:
+    """Pick a display unit so axis numbers land in a reasonable range."""
+    for u in ("s", "ms", "us", "ns", "ps", "fs"):
+        if max_seconds / _UNIT_SCALE[u] >= 1.0:
+            return u
+    return "fs"
+
+
+# ---------------------------------------------------------------------
+# Public config
+# ---------------------------------------------------------------------
 
 
 @dataclass
@@ -36,14 +50,21 @@ class PlotConfig:
     right_legend_width: float = 0.48
     titles: Optional[List[str]] = None
     filename: Optional[str] = None
-    # palette offsets (if you want different color cycles)
+    # palette offsets
     inputs_offset: int = 0
     outputs_offset: int = 0
+    # time axis control: "auto" or one of "s","ms","us","ns","ps","fs"
+    time_display: str = "auto"
+
+
+# ---------------------------------------------------------------------
+# Main grid
+# ---------------------------------------------------------------------
 
 
 @dataclass
 class QDPlotGrid:
-    """Compose side-by-side columns for multiple QDTraces objects."""
+    """Compose side-by-side columns for one or more QDTraces-like objects."""
 
     theme: StyleTheme = field(default_factory=default_theme)
     cfg: PlotConfig = field(default_factory=PlotConfig)
@@ -51,7 +72,7 @@ class QDPlotGrid:
     def render(self, traces_list: Iterable[Any]) -> plt.Figure:
         datas = list(traces_list)
         if not (1 <= len(datas) <= 3):
-            raise ValueError("QDPlotGrid currently supports 1–3 columns.")
+            raise ValueError("QDPlotGrid currently supports 1 to 3 columns.")
 
         # Build global color maps across all columns
         all_flying = [
@@ -67,28 +88,57 @@ class QDPlotGrid:
             all_intrin, self.theme.palette_outputs, self.cfg.outputs_offset
         )
 
-        # Shared top limits for classical columns
+        # Decide time display unit (use physical time)
+        tmax_sec = max(
+            (
+                float(
+                    np.nanmax(
+                        getattr(d, "t", np.array([0.0]))
+                        * getattr(d, "time_unit_s", 1.0)
+                    )
+                )
+                for d in datas
+            ),
+            default=1.0,
+        )
+        if self.cfg.time_display == "auto":
+            time_unit = _choose_time_unit(tmax_sec)
+        else:
+            time_unit = self.cfg.time_display
+        # seconds per display unit
+        time_scale = _UNIT_SCALE.get(time_unit, 1.0)
+
+        # Global top-panel limits if any column is classical
         have_classical = any(
             getattr(d, "classical", False)
             and getattr(d, "omega", None) is not None
             for d in datas
         )
-        Ωmax = max(
-            (
-                float(np.nanmax(d.omega))
-                for d in datas
-                if getattr(d, "omega", None) is not None
-            ),
-            default=1.0,
-        )
-        Amax = max(
-            (
-                float(np.nanmax(d.area))
-                for d in datas
-                if getattr(d, "area", None) is not None
-            ),
-            default=1.0,
-        )
+        if have_classical:
+            # omega in solver units -> convert to rad/s by dividing by time_unit_s
+            omega_max = max(
+                (
+                    float(
+                        np.nanmax(d.omega)
+                        / max(getattr(d, "time_unit_s", 1.0), 1e-300)
+                    )
+                    for d in datas
+                    if getattr(d, "omega", None) is not None
+                ),
+                default=1.0,
+            )
+            # area is already in radians (no scaling)
+            area_max = max(
+                (
+                    float(np.nanmax(d.area))
+                    for d in datas
+                    if getattr(d, "area", None) is not None
+                ),
+                default=1.0,
+            )
+        else:
+            omega_max = 1.0
+            area_max = 1.0
 
         # Layout
         ncols = len(datas)
@@ -110,6 +160,12 @@ class QDPlotGrid:
         master_x = None
 
         for j, d in enumerate(datas):
+            # convert solver time -> physical -> display units
+            t_solver = getattr(d, "t", np.array([], dtype=float))
+            s_per_unit = float(getattr(d, "time_unit_s", 1.0))
+            t_phys = t_solver * s_per_unit
+            t_plot = t_phys / time_scale
+
             if self.cfg.show_top:
                 ax_top = fig.add_subplot(gs[0, j], sharex=master_x)
                 top_axes.append(ax_top)
@@ -131,20 +187,24 @@ class QDPlotGrid:
                     getattr(d, "classical", False)
                     and getattr(d, "omega", None) is not None
                 ):
+                    # Convert omega to physical rad/s for plotting
+                    omega_solver = d.omega
+                    omega_phys = omega_solver / max(s_per_unit, 1e-300)
+                    area = d.area  # radians, no scaling
                     draw_top_panel_classical(
                         ax_top,
-                        d.t,
-                        d.omega,
-                        d.area,
-                        Ωmax,
-                        Amax,
+                        t_plot,
+                        omega_phys,
+                        area,
+                        omega_max,
+                        area_max,
                         is_first,
                         is_last,
                     )
                 else:
                     draw_top_panel_quantum(
                         ax_top,
-                        d.t,
+                        t_plot,
                         d.flying_labels,
                         d.fly_H,
                         d.fly_V,
@@ -154,16 +214,19 @@ class QDPlotGrid:
                 if self.cfg.titles and j < len(self.cfg.titles):
                     ax_top.set_title(self.cfg.titles[j], fontsize=11)
 
-            # -- MID (QD pops) --
-            draw_mid_qd(ax_mid, d.t, d.qd, self.theme, is_first_col=(j == 0))
-            if not self.cfg.show_top:
-                if self.cfg.titles and j < len(self.cfg.titles):
-                    ax_mid.set_title(self.cfg.titles[j], fontsize=11)
+            # -- MID (QD populations) --
+            draw_mid_qd(ax_mid, t_plot, d.qd, self.theme, is_first_col=(j == 0))
+            if (
+                not self.cfg.show_top
+                and self.cfg.titles
+                and j < len(self.cfg.titles)
+            ):
+                ax_mid.set_title(self.cfg.titles[j], fontsize=11)
 
             # -- BOT (outputs) --
             draw_bot_outputs(
                 ax_bot,
-                d.t,
+                t_plot,
                 d.intrinsic_labels,
                 d.out_H,
                 d.out_V,
@@ -176,7 +239,7 @@ class QDPlotGrid:
                 top_axes[-1].tick_params(axis="x", labelbottom=False)
             ax_mid.tick_params(axis="x", labelbottom=False)
 
-        # Shared legend
+        # Shared legend on the right
         legend_ax = fig.add_subplot(gs[:, -1])
         legend_ax.axis("off")
         handles = legend_handles(self.theme, all_intrin, out_color)
@@ -193,6 +256,10 @@ class QDPlotGrid:
         for ax in all_axes:
             ax.locator_params(axis="x", nbins=5)
             ax.locator_params(axis="y", nbins=4)
+
+        # Put a shared x label on the bottom row
+        if bot_axes:
+            bot_axes[-1].set_xlabel(f"Time ({time_unit})")
 
         if self.cfg.filename:
             fig.savefig(

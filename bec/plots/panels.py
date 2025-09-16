@@ -84,13 +84,6 @@ def draw_mid_qd(
     is_first_col: bool,
 ) -> None:
     for lab, y in zip(theme.qd_labels, qd_traces):
-        print(
-            lab,
-            theme.qd_styles[lab],
-            theme.qd_widths[lab],
-            theme.qd_alphas[lab],
-            theme.qd_colors[lab],
-        )
         ax.plot(
             t,
             y,
