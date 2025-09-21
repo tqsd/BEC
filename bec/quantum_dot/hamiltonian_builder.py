@@ -29,7 +29,8 @@ class HamiltonianBuilder(HamiltonianProvider):
         proj_X2 = self._ctx["s_X2_X2"]([])
         X1X2 = self._ctx["s_X1_X2"]([])
         X2X1 = self._ctx["s_X2_X1"]([])
-        Hloc = (Delta / 2) * (proj_X1 - proj_X2) + (Delta_p / 2) * (X1X2 + X2X1)
+        Hloc = (Delta / 2) * (proj_X1 - proj_X2) + \
+            (Delta_p / 2) * (X1X2 + X2X1)
         return self._qobj(self._kron.pad(Hloc, "i", -1), dims)
 
     def lmi(self, label: str, dims: List[int]) -> Qobj:
@@ -66,7 +67,7 @@ class HamiltonianBuilder(HamiltonianProvider):
         Hloc = 0.5 * self._ctx["s_XX_XX"]([])
         return self._qobj(self._kron.pad(Hloc, "i", -1), dims)
 
-    def classical_2g_stark(self, dims: List[int]) -> Qobj:
-        # shift two-photon splitting: (+1/2)|XX><XX| - (1/2)|G><G|
-        Hloc = 0.5 * self._ctx["s_XX_XX"]([]) - 0.5 * self._ctx["s_G_G"]([])
-        return self._qobj(self._kron.pad(Hloc, "i", -1), dims)
+    # def classical_2g_stark(self, dims: List[int]) -> Qobj:
+    #    # shift two-photon splitting: (+1/2)|XX><XX| - (1/2)|G><G|
+    #    Hloc = 0.5 * self._ctx["s_XX_XX"]([]) - 0.5 * self._ctx["s_G_G"]([])
+    #    return self._qobj(self._kron.pad(Hloc, "i", -1), dims)

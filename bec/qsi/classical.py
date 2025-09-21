@@ -58,7 +58,7 @@ qsi = QSI()
 class Params:
     # Energies (eV)
     exciton_eV: float = 1.300
-    biexciton_eV: float = 1.297  # exciton - binding; just a safe default
+    biexciton_eV: float = 2.7  # exciton - binding; just a safe default
     fss_eV: float = 0.0
     delta_prime_eV: float = 0.0
 
@@ -211,14 +211,10 @@ def _run_simulation(
     scenario = ClassicalDriveScenario(drive=drive)
 
     # returns traces, rho_final, rho_phot_final
-    print("EXECUTING")
     traces, _, rho_phot = engine.run_with_state(qd, scenario, cfg)
-    print("DONE?")
     save_path = (
         params.plot_save.strip() if isinstance(params.plot_save, str) else ""
     )
-    print("SAVINg?", flush=True)
-    print(save_path, flush=True)
     fig = plot_traces(
         traces,
         title=r"Biexciton classical 2$\gamma$ drive (Gaussian)",
@@ -357,6 +353,10 @@ def _param_set(msg: Dict[str, Any]) -> Dict[str, Any]:
 
         except Exception as e:
             errors.append(f"{key}: {e}")
+        try:
+            _ = _build_qd(PARAMS)
+        except Exception as e:
+            errors.append(f"QD ERR: {e}")
 
     return {
         "msg_type": "param_set_response",
@@ -391,7 +391,6 @@ def _channel_query(msg: Dict[str, Any]) -> Dict[str, Any]:
       }
     Returns channel that *prepares* rho_phot_final from a scalar input.
     """
-    print("MESSAGE QUERY")
     try:
         signal = (msg.get("signals") or [None])[0]
         if not isinstance(signal, dict):

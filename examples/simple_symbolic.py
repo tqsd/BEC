@@ -52,7 +52,6 @@ def main():
     # -----------------------------
     exciton_e = 1.300  # exciton center (eV)
     fss = 1e-6  # fine-structure splitting (~1 micro-eV)
-    delta_prime = 0.0  # anisotropic mixing term (eV)
     binding = 3e-3  # biexciton binding energy (~3 meV)
 
     x1 = exciton_e + 0.5 * fss
@@ -63,7 +62,6 @@ def main():
         biexciton=e_xx,
         exciton=exciton_e,
         fss=fss,
-        delta_prime=delta_prime,
     )
 
     # -----------------------------
@@ -113,10 +111,11 @@ def main():
 
     # for f(t) = A * exp(-(t-t0)^2/(2*sigma^2)),  ∫ f dt = A * sigma * sqrt(2*pi)
     A = float(area / (sigma * np.sqrt(2.0 * np.pi)))
+    A = float((np.pi * 0.8) / (omega0 * sigma * np.sqrt(2.0 * np.pi)))
 
     # Two-photon laser frequency around half the XX->G frequency, plus detuning.
     w_xxg = float(EL.XX) * _e / _hbar  # rad/s
-    detuning = 1.0e11  # rad/s
+    detuning = 0  # rad/s
     wL = 0.5 * w_xxg + detuning
 
     # Symbolic envelope specified as JSON (your driver supports this)
@@ -155,12 +154,12 @@ def main():
 
     backend = QutipMesolveBackend(
         MesolveOptions(
-            nsteps=10000,
-            rtol=1e-9,
-            atol=1e-11,
+            nsteps=1000,
+            rtol=1e-7,
+            atol=1e-9,
             progress_bar="tqdm",
             store_final_state=True,
-            max_step=1e-2,  # cap internal step; big speedup with time-dependent coeffs
+            max_step=1e-1,  # cap internal step; big speedup with time-dependent coeffs
         )
     )
     engine = SimulationEngine(solver=backend)
@@ -168,7 +167,8 @@ def main():
     # -----------------------------
     # 6) Run and collect
     # -----------------------------
-    traces, rho_final, rho_phot_final = engine.run_with_state(qd, scenario, cfg)
+    traces, rho_final, rho_phot_final = engine.run_with_state(
+        qd, scenario, cfg)
 
     print(qd.diagnostics.mode_layout_summary(rho_phot=rho_phot_final))
 

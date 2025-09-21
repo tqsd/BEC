@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+from scipy.constants import hbar as _hbar, e as _e
 
 import numpy as np
 
@@ -36,7 +37,13 @@ class EnergyLevels:
     biexciton: float
     exciton: float
     fss: float
-    delta_prime: float
+    delta_prime: float = field(default=0.0)
+    # --- guard configuration (optional knobs) ---
+    enforce_2g_guard: bool = True  # raise on invalid 2γ regime
+    min_binding_energy_meV: float = 1.0  # fallback floor if no sigma_t
+    pulse_sigma_t_s: Optional[float] = (
+        None  # rms amplitude width [s] (optional)
+    )
     # fixed or derived values
     G: float = field(init=False, default=0.0)
     X1: float = field(init=False)
@@ -67,6 +74,36 @@ class EnergyLevels:
         self.e_X2_XX = (self.XX - self.X2, Transition.X2_XX, "X2_XX")
         self.e_G_X = (self.X2, Transition.G_X, "G_X")
         self.e_X_XX = (self.XX - self.X1, Transition.X_XX, "X_XX")
+        if self.enforce_2g_guard:
+            self._validate_two_photon_regime()
+
+        # -------- guard logic --------
+
+    def _validate_two_photon_regime(self) -> None:
+        """
+        Raise if the effective two-photon model is not far detuned from 1γ.
+        Uses |E_b| as proxy: on 2γ resonance, |Δ_1γ| = |E_b|/2.
+        """
+        # Floor from pulse bandwidth if available: |E_b| > 6 ħ / σ_t
+        thresh_meV = float(self.min_binding_energy_meV)
+        if self.pulse_sigma_t_s and self.pulse_sigma_t_s > 0.0:
+            sigma_omega = 1.0 / float(self.pulse_sigma_t_s)  # [rad/s]
+            sigma_E_J = _hbar * sigma_omega  # [J]
+            sigma_E_meV = 1e3 * sigma_E_J / _e  # [meV]
+            thresh_meV = max(thresh_meV, 6.0 * sigma_E_meV)
+
+        Eb_meV = 1e3 * float(self.binding_energy)  # [meV]
+        if abs(Eb_meV) < thresh_meV:
+
+            raise Exception(
+                "Effective two-photon Hamiltonian invalid: single-photon detuning is too small.\n"
+                f"  |E_b| = {
+                    abs(Eb_meV):.3f} meV  (|Delta_1gamma| = |E_b|/2)\n"
+                f"  threshold = {thresh_meV:.3f} meV "
+                "(rule of thumb: |E_b| > 6 * hbar/sigma_t or > min_binding_energy_meV)\n"
+                "Use the full four-level ladder Hamiltonian (with explicit 1gamma couplings) "
+                "or increase pulse length/detuning."
+            )
 
     def compute_modes(self) -> List[LightMode]:
         """
@@ -87,6 +124,7 @@ class EnergyLevels:
                         source=TransitionType.INTERNAL,
                         transition=t[1],
                         label=t[2],
+                        label_tex=t[1].tex(),
                     )
                 )
         else:
@@ -140,7 +178,8 @@ class EnergyLevels:
         delta = float(self.fss)
         delta_p = float(self.delta_prime)
 
-        H = 0.5 * np.array([[delta, delta_p], [delta_p, -delta]], dtype=complex)
+        H = 0.5 * \
+            np.array([[delta, delta_p], [delta_p, -delta]], dtype=complex)
 
         eigvals, eigvecs = np.linalg.eigh(H)
 

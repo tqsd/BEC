@@ -31,9 +31,9 @@ qd_source = coordinator.register_component(
 coordinator.run()
 
 # 3) Configure device/physics + sim params
-qd_source.set_param("exciton_eV", 1.30)
+qd_source.set_param("exciton_eV", 1.35)
 qd_source.set_param("biexciton_eV", 2.70)  # example value
-qd_source.set_param("fss_eV", 4e-6)
+qd_source.set_param("fss_eV", 0e-6)
 qd_source.set_param("dipole_moment_Cm", 3.0e-29)
 
 qd_source.set_param("cavity_Q", 5e4)
@@ -49,8 +49,8 @@ qd_source.set_param("t_stop_s", 4e-9)
 qd_source.set_param("num_t", 5001)
 
 # Optional plot controls
-qd_source.set_param("plot_show", "t")
-# qd_source.set_param("plot_save", "test.png")
+qd_source.set_param("plot_show", "True")
+qd_source.set_param("plot_save", "test.png")
 
 # Push all configured params to the device (param_set)
 qd_source.send_params()
@@ -83,12 +83,24 @@ detuning = 0e10
 wL = 0.5 * w_xxg + detuning
 
 drive = {
-    "type": "classical_2g",  # wrapper accepts: classical_2g / 2g
-    "omega0": omega0,  # rad/s
-    "detuning": 0.0,  # rad/s
-    "label": "gaussian π-pulse",
+    "type": "classical_2g",
+    "omega0": 1.0e10,
+    "detuning": 0.0,
+    "label": "symbolic 2g",
     "laser_omega": wL,
-    "envelope": env_json,
+    "envelope": {
+        "type": "symbolic",
+        # expression in variable `t` (seconds)
+        "expr": "np.exp(-((t - t0)**2)/(2*sigma**2))",
+        "params": {"t0": 1.0e-9, "sigma": 5.0e-11},
+        # optional domain hints (if your impl samples internally)
+        "t_start": 0.0,
+        "t_stop": 4.0e-9,
+        "num": 5001,
+        # optional area normalization/override
+        "normalize": False,
+        "area": float(np.pi / omega0),
+    },
 }
 
 # 6) Request a channel; map the port name "input" to our scalar state UUID

@@ -20,12 +20,24 @@ QD_COLORS: Dict[str, str] = {
 QD_STYLES: Dict[str, tuple | str] = {
     r"$|G\rangle$": "-",
     r"$|X_1\rangle$": (0, (2.0, 2.0)),
-    r"$|X_2\rangle$": (0, (2.0, 2.0)),
+    r"$|X_2\rangle$": (0, (0.01, 4.0)),
     r"$|XX\rangle$": "-",
 }
 
 QD_WIDTHS: Dict[str, float] = {k: 1.4 for k in QD_LABELS}
+QD_WIDTHS: Dict[str, float] = {
+    r"$|G\rangle$": 1.4,
+    r"$|X_1\rangle$": 1.4,
+    r"$|X_2\rangle$": 4,
+    r"$|XX\rangle$": 1.4,
+}
 QD_ALPHAS: Dict[str, float] = {k: 0.9 for k in QD_LABELS}
+QD_LABELS_TEX: Dict[str, str] = {
+    r"$|G\rangle$": r"$|\mathrm{G}\rangle$",
+    r"$|X_1\rangle$": r"$|\mathrm{X_1}\rangle$",
+    r"$|X_2\rangle$": r"$|\mathrm{X_2}\rangle$",
+    r"$|XX\rangle$": r"$|\mathrm{XX}\rangle$",
+}
 
 # ---- Palettes for mode coloring (inputs/outputs) ----
 PALETTE_A = [
@@ -38,13 +50,13 @@ PALETTE_A = [
     "#BBBBBB",
 ]
 PALETTE_B = [
-    "#0072B2",
-    "#D55E00",
-    "#009E73",
-    "#F0E442",
-    "#56B4E9",
-    "#CC79A7",
-    "#666666",
+    "#1b9e77",  # teal-green
+    "#d95f02",  # orange
+    "#7570b3",  # purple-blue
+    "#e7298a",  # pink-magenta
+    "#66a61e",  # olive green
+    "#e6ab02",  # mustard
+    "#a6761d",  # brown
 ]
 
 
@@ -66,6 +78,7 @@ def latex_mode_label(lbl: str) -> str:
 @dataclass
 class StyleTheme:
     qd_labels: List[str]
+    qd_labels_tex: Dict[str, str]
     qd_colors: Dict[str, str]
     qd_styles: Dict[str, tuple | str]
     qd_widths: Dict[str, float]
@@ -77,6 +90,7 @@ class StyleTheme:
 def default_theme() -> StyleTheme:
     return StyleTheme(
         qd_labels=QD_LABELS,
+        qd_labels_tex=QD_LABELS_TEX,
         qd_colors=QD_COLORS,
         qd_styles=QD_STYLES,
         qd_widths=QD_WIDTHS,

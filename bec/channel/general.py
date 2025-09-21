@@ -26,7 +26,6 @@ class GeneralKrausChannel:
         Nout = int(np.prod(self.dims_out))
         acc = Qobj(np.zeros((Nout, Nout), dtype=complex))
         for K in self.kraus:
-            # Pyright doesn't know Qobj overloads; the operation is valid in QuTiP.
             acc = acc + (K * rho_in * K.dag())  # type: ignore[operator]
         return acc
 
@@ -37,6 +36,8 @@ class GeneralKrausChannel:
         for K in self.kraus:
             acc = acc + (K.dag() * K)  # type: ignore[operator]
         if (acc - qeye(Nin)).norm() > tol:
+            print(self.dims_in)
+            print(self.dims_out)
             raise ValueError("Channel is not TP to tolerance")
 
     def as_super(self) -> Qobj:

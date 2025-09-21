@@ -14,6 +14,18 @@ from bec.quantum_dot.protocols import (
     ObservableProvider,
 )
 
+from bec.quantum_dot.metrics.mode_registry import build_registry
+from bec.quantum_dot.metrics import (
+    PhotonCounter,
+    TwoPhotonProjector,
+    EntanglementCalculator,
+    OverlapCalculator,
+    ensure_rho,
+    purity,
+    BellAnalyzer,
+    PopulationDecomposer,
+)
+
 
 _E_OVER_HBAR = e / hbar
 _TWO_PI = 2.0 * pi
@@ -359,60 +371,86 @@ class Diagnostics(DiagnosticsProvider):
     def mode_layout_summary(
         self, *, rho_phot: Qobj | np.ndarray | None = None
     ) -> Dict[str, Any]:
-        # (unchanged prelude)
-        modes = getattr(self._modes, "intrinsic", None)
-        if modes is None:
-            modes = self._modes.modes  # type: ignore[attr-defined]
-        labels = [getattr(m, "label", f"mode_{i}") for i, m in enumerate(modes)]
+        reg = build_registry(self.qd, self._modes, self._observable_provider)
 
-        # central frequencies as before
+        oc = OverlapCalculator(
+            gamma_XX_X1=float(self._g.get("L_XX_X1", 0.0)),
+            gamma_XX_X2=float(self._g.get("L_XX_X2", 0.0)),
+            gamma_X1_G=float(self._g.get("L_X1_G", 0.0)),
+            gamma_X2_G=float(self._g.get("L_X2_G", 0.0)),
+            delta_rad_s=self._delta_rad_per_s(),
+        )
+
         summary: Dict[str, Any] = {
-            "num_intrinsic_modes": len(modes),
-            "labels": labels,
-            "overlap_abs_late": self.effective_overlap("late"),
-            "overlap_abs_early": self.effective_overlap("early"),
-            "overlap_abs_avg": self.effective_overlap("avg"),
+            "num_intrinsic_modes": len(reg.labels_by_mode_index),
+            "labels": reg.labels_by_mode_index,
+            "overlap_abs_early": oc.overlap("early"),
+            "overlap_abs_late": oc.overlap("late"),
+            "overlap_abs_avg": oc.overlap("avg"),
+            "HOM_visibility": {
+                "early": oc.hom("early"),
+                "late": oc.hom("late"),
+                "avg": oc.hom("avg"),
+            },
             "fss_eV": float(getattr(self._EL, "fss", 0.0)),
             "central_frequencies": self.central_frequencies_by_mode(),
+            "rates_per_s": {
+                "L_XX_X1": float(self._g.get("L_XX_X1", 0.0)),
+                "L_XX_X2": float(self._g.get("L_XX_X2", 0.0)),
+                "L_X1_G": float(self._g.get("L_X1_G", 0.0)),
+                "L_X2_G": float(self._g.get("L_X2_G", 0.0)),
+            },
+            "bandwidths_rad_s": {
+                lab: self._mode_label_to_rate_per_s(lab)
+                for lab in reg.labels_by_mode_index
+            },
+            "bandwidths_Hz": {
+                lab: self._mode_label_to_rate_per_s(lab) / (2.0 * np.pi)
+                for lab in reg.labels_by_mode_index
+            },
+            "mode_transitions": self._mode_transitions_by_label(),
         }
 
-        # --- NEW: expose raw decay rates (1/s) and per-mode bandwidths
-        # Raw rates dictionary (as provided), in 1/s:
-        summary["rates_per_s"] = {
-            "L_XX_X1": float(self._g.get("L_XX_X1", 0.0)),
-            "L_XX_X2": float(self._g.get("L_XX_X2", 0.0)),
-            "L_X1_G": float(self._g.get("L_X1_G", 0.0)),
-            "L_X2_G": float(self._g.get("L_X2_G", 0.0)),
-        }
-
-        # Per-mode bandwidths, keyed by mode label
-        # Convention: angular bandwidth ~ rate (rad/s), and Hz = (rad/s)/(2π).
-        bw_rad = {lab: self._mode_label_to_rate_per_s(lab) for lab in labels}
-        bw_hz = {lab: val / _TWO_PI for lab, val in bw_rad.items()}
-        summary["bandwidths_rad_s"] = bw_rad
-        summary["bandwidths_Hz"] = bw_hz
-
-        # Helpful for wiring: which transition each label represents
-        summary["mode_transitions"] = self._mode_transitions_by_label()
-
-        # --- existing extras when rho provided
         if rho_phot is not None:
-            early_facts, late_facts, _p, _m, dims_phot, _offset = (
-                infer_index_sets_from_registry(self.qd, rho_has_qd=False)
-            )
-            pn_values, pn_errors = self._photon_number_metrics(rho_phot)
-            E_N, err_ln = self._log_negativity_early_late(
-                rho_phot, list(dims_phot), list(early_facts), list(late_facts)
+            pc = PhotonCounter(reg)
+            ent = EntanglementCalculator(reg)
+            tp = TwoPhotonProjector(reg)
+            P2 = tp.projector()
+            pop = PopulationDecomposer(reg).p0_p1_p2_exact_multi(rho_phot, P2)
+            pn = pc.counts(rho_phot)
+            E_N = ent.log_neg_early_late(rho_phot)
+
+            R = ensure_rho(rho_phot, reg.dims_phot)
+            purity_uncond = purity(R)
+
+            R2, p2 = tp.postselect(rho_phot)
+            if p2 > 0.0:
+                E_N_cond = ent.log_neg_early_late(R2)
+                purity_cond = purity(R2)
+            else:
+                E_N_cond = purity_cond = 0.0
+            bell = {}
+            if p2 > 0.0:
+                bell = BellAnalyzer(reg).analyze(R2)
+
+            summary.update(
+                {
+                    "population_breakdown": pop,
+                    "bell_component": bell,
+                }
             )
             summary.update(
                 {
-                    "photon_numbers": pn_values,
-                    "entanglement": {"log_negativity": E_N},
-                    "errors": {
-                        "photon_numbers": pn_errors,
-                        "entanglement": {"log_negativity": err_ln},
+                    "photon_numbers": pn,
+                    "entanglement": {
+                        "log_negativity": E_N,
+                        "log_negativity_conditional": E_N_cond,
                     },
+                    "purity": {
+                        "unconditional": purity_uncond,
+                        "conditional_two_photon": purity_cond,
+                    },
+                    "probabilities": {"p_two_photon": p2},
                 }
             )
-
         return summary

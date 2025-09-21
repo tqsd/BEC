@@ -9,6 +9,7 @@ from matplotlib.axes import Axes
 
 from .styles import StyleTheme, default_theme, build_color_map
 from .panels import (
+    ax_label,
     draw_top_panel_classical,
     draw_top_panel_quantum,
     draw_mid_qd,
@@ -158,6 +159,16 @@ class QDPlotGrid:
         mid_axes: List[Axes] = []
         bot_axes: List[Axes] = []
         master_x = None
+        out_ymax = 0.0
+        for d in datas:
+            for arr in getattr(d, "out_H", []):
+                if arr is not None and len(arr):
+                    out_ymax = max(out_ymax, float(np.nanmax(arr)))
+            for arr in getattr(d, "out_V", []):
+                if arr is not None and len(arr):
+                    out_ymax = max(out_ymax, float(np.nanmax(arr)))
+        # small headroom; keep at least 1 (since <N> is often <=1)
+        out_ymax = max(0.5, 1.10 * out_ymax)
 
         for j, d in enumerate(datas):
             # convert solver time -> physical -> display units
@@ -215,7 +226,8 @@ class QDPlotGrid:
                     ax_top.set_title(self.cfg.titles[j], fontsize=11)
 
             # -- MID (QD populations) --
-            draw_mid_qd(ax_mid, t_plot, d.qd, self.theme, is_first_col=(j == 0))
+            draw_mid_qd(ax_mid, t_plot, d.qd, self.theme,
+                        is_first_col=(j == 0))
             if (
                 not self.cfg.show_top
                 and self.cfg.titles
@@ -224,6 +236,7 @@ class QDPlotGrid:
                 ax_mid.set_title(self.cfg.titles[j], fontsize=11)
 
             # -- BOT (outputs) --
+
             draw_bot_outputs(
                 ax_bot,
                 t_plot,
@@ -232,6 +245,7 @@ class QDPlotGrid:
                 d.out_V,
                 out_color,
                 is_first_col=(j == 0),
+                y_max=out_ymax,
             )
 
             # Hide x tick labels except bottom row
@@ -259,7 +273,7 @@ class QDPlotGrid:
 
         # Put a shared x label on the bottom row
         if bot_axes:
-            bot_axes[-1].set_xlabel(f"Time ({time_unit})")
+            bot_axes[-1].set_xlabel(ax_label("Time", "t", r"\nano\second"))
 
         if self.cfg.filename:
             fig.savefig(

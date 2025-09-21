@@ -75,6 +75,7 @@ class SimulationEngine:
         - rho_phot_final: the reduced photonic state with QD traced out (if requested)
         """
         # 1) install modes / classical drive
+        qd.N_cut = cfg.trunc_per_pol
         scenario.prepare(qd)
         drive = scenario.classical_drive()
 
@@ -135,6 +136,7 @@ class SimulationEngine:
                     ),
                 ]
             )
+            area_num = np.trapezoid(Omega_t, cfg.tlist)
 
         flying_labels = [
             m.label
@@ -147,12 +149,19 @@ class SimulationEngine:
             if getattr(m, "source", None) == TransitionType.INTERNAL
         ]
 
+        intrinsic_labels_tex = [
+            m.label_tex
+            for m in qd.modes.modes
+            if getattr(m, "source", None) == TransitionType.INTERNAL
+        ]
+
         traces = QDTraces(
             t=cfg.tlist,
             time_unit_s=cfg.time_unit_s,
             classical=(drive is not None),
             flying_labels=flying_labels,
             intrinsic_labels=intrinsic_labels,
+            intrinsic_labels_tex=intrinsic_labels_tex,
             qd=[qd_tr[i] for i in range(4)],
             fly_H=list(fly_H),
             fly_V=list(fly_V),

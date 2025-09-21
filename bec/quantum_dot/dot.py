@@ -80,7 +80,9 @@ class QuantumDot:
         cavity_params=None,
         dipole_params=None,
         time_unit_s: float = 1e-9,
+        N_cut: int = 2,
     ):
+        self.N_cut = N_cut
         self.dot = CustomState(4)
         self.dot.state = int(initial_state)
         self._EL = energy_levels
@@ -166,7 +168,7 @@ class QuantumDot:
         *,
         time_unit_s: float = 1.0,
     ) -> List[Qobj | list]:
-        H = [self.hams.fss(dims, time_unit_s)]
+        H: List[Any] = [self.hams.fss(dims, time_unit_s)]
         # external modes
         for m in [
             m
@@ -220,34 +222,6 @@ class QuantumDot:
                     ]
                 )
 
-            # optional Stark term if you set drive.stark_kappa
-            kappa = getattr(classical_2g, "stark_kappa", 0.0)
-            if kappa:
-                env = classical_2g.envelope
-                H.append(
-                    [
-                        self.hams.classical_2g_stark(dims),
-                        lambda t, s=time_unit_s, _e=env, _k=kappa: float(
-                            _k * (_e(s * t) ** 2)
-                        )
-                        * s,  # rad/s -> solver units
-                    ]
-                )
-        # if classical_2g is not None:
-        #    # scale classical two-photon drive
-        #    H.append(
-        #        [
-        #            self.hams.classical_2g_flip(dims),
-        #            classical_2g.qutip_coeff(time_unit_s=time_unit_s),
-        #        ]
-        #    )
-        #    if classical_2g.detuning != 0.0:
-        #        H.append(
-        #            [
-        #                self.hams.classical_2g_detuning(dims),
-        #                classical_2g.detuning * time_unit_s,
-        #            ]
-        #        )
         return H
 
     def qutip_collapse_operators(

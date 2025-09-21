@@ -37,19 +37,36 @@ class PrepareFromVacuum:
 @dataclass
 class PrepareFromScalar:
     rho_target: Qobj
+    clip_tol: float = 1e-12
 
     def build(self) -> GeneralKrausChannel:
-        dims_out = self.rho_target.dims[0]
-        evals, vecs = self.rho_target.eigenstates()
-        ket0 = basis(1, 0)
+        # Ensure Hermitian
+        rho = 0.5 * (self.rho_target + self.rho_target.dag())
 
+        # Get dims
+        dims_out = rho.dims[0]
+
+        # Eigendecompose
+        evals, vecs = rho.eigenstates()
+
+        # Clip tiny negatives and renormalize to trace 1
+        evals = np.array([max(0.0, float(p)) for p in evals], dtype=float)
+        s = float(evals.sum())
+        if s <= 0.0:
+            raise ValueError(
+                "rho_target has non-positive spectrum after clipping."
+            )
+        evals /= s
+
+        # Build Kraus operators K_k = sqrt(p_k) |psi_k><0|
+        ket0 = basis(1, 0)
         Ks = []
         for p, psi in zip(evals, vecs):
-            p = float(p)
-            if p > 1e-14:
+            if p > self.clip_tol:
                 K = np.sqrt(p) * (psi * ket0.dag())
                 K.dims = [[dims_out], [[1]]]
                 Ks.append(K)
+
         ch = GeneralKrausChannel(Ks, dims_in=[1], dims_out=dims_out)
         ch.check_cptp()
         return ch

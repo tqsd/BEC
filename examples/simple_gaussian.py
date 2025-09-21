@@ -56,7 +56,7 @@ def main():
     # 1) Energy levels (in eV)
     # -----------------------------
     exciton_e = 1.300  # exciton center
-    fss = 0.0  # fine-structure splitting \Delta
+    fss = 1e-6  # fine-structure splitting \Delta
     delta_p = 0.0  # anisotropic mixing \Delta'
     binding = 3e-3  # biexciton binding energy (~3 meV)
 
@@ -94,15 +94,15 @@ def main():
     # -----------------------------
     # 4) Classical two-photon drive
     # -----------------------------
-    sigma = 1e-11  # pulse width (s)
-    t0 = 1e-9  # pulse center (s)
+    sigma = 9e-11  # pulse width (s)
+    t0 = 0.5e-9  # pulse center (s)
     omega0 = 1e10  # Rabi amplitude (rad/s)
 
     w_xxg = float(EL.XX) * _e / _hbar
-    detuning = 5e10
+    detuning = 0e10
     wL = 0.5 * w_xxg + detuning
 
-    pulse_area = np.pi / omega0
+    pulse_area = (np.pi * 1) / omega0
     lam_nm = detuning_to_wavelength_nm(EL, detuning=detuning)
     print(f"Laser wavelength = {lam_nm:.2f} nm")
 
@@ -110,7 +110,6 @@ def main():
     drive = ClassicalTwoPhotonDrive(
         envelope=env,
         omega0=omega0,
-        detuning=0.0,
         label="2g",
         laser_omega=wL,
     )
@@ -119,17 +118,17 @@ def main():
     # -----------------------------
     # 5) Simulation config & engine
     # -----------------------------
-    tlist = np.linspace(0.0, 20.0, 20001)  # 0 → 20 ns
-    cfg = SimulationConfig(tlist=tlist, trunc_per_pol=2, time_unit_s=1e-10)
+    tlist = np.linspace(0.0, 2.0, 1001)  # 0 → 20 ns
+    cfg = SimulationConfig(tlist=tlist, trunc_per_pol=2, time_unit_s=1e-9)
 
     backend = QutipMesolveBackend(
         MesolveOptions(
             nsteps=20000,
-            rtol=1e-9,
-            atol=1e-11,
+            rtol=1e-7,
+            atol=1e-9,
             progress_bar="tqdm",
             store_final_state=True,
-            max_step=1e-2,
+            max_step=1e-1,
         )
     )
     engine = SimulationEngine(solver=backend)
@@ -137,7 +136,8 @@ def main():
     # -----------------------------
     # 6) Run simulation
     # -----------------------------
-    traces, rho_final, rho_phot_final = engine.run_with_state(qd, scenario, cfg)
+    traces, rho_final, rho_phot_final = engine.run_with_state(
+        qd, scenario, cfg)
 
     print(qd.diagnostics.mode_layout_summary(rho_phot=rho_phot_final))
 
@@ -150,6 +150,7 @@ def main():
     )
     print("Resulting state:")
     print(pretty_density(rho_phot_final, dims))
+    print("-----")
 
     fig = plot_traces(
         traces,
