@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # exported by bec/quantum_dot/__init__.py
+from bec.operators.qd_operators import QDState
 from bec.quantum_dot import QuantumDot
 
 
@@ -52,7 +53,11 @@ class TestQuantumDot(unittest.TestCase):
 
         # Act
         qd = QuantumDot(
-            self.EL, cavity_params=None, dipole_params=None, time_unit_s=1e-9
+            self.EL,
+            cavity_params=None,
+            dipole_params=None,
+            time_unit_s=1e-9,
+            initial_state=QDState.G,
         )
 
         # Assert: ModeRegistry constructed with intrinsic modes and rotation params
@@ -99,7 +104,12 @@ class TestQuantumDot(unittest.TestCase):
         }
         DecayModelMock.return_value.compute.return_value = {"L_X1_G": 1.0}
 
-        qd = QuantumDot(self.EL, cavity_params=None, dipole_params=None)
+        qd = QuantumDot(
+            self.EL,
+            cavity_params=None,
+            dipole_params=None,
+            initial_state=QDState.G,
+        )
 
         # Prepare new context to verify refresh
         QDContextBuilderMock.return_value.build.reset_mock()
@@ -166,7 +176,12 @@ class TestQuantumDot(unittest.TestCase):
         hams.tpe.return_value = "H_tpe"
         dims = [4, 2, 2]
 
-        qd = QuantumDot(self.EL, cavity_params=None, dipole_params=None)
+        qd = QuantumDot(
+            self.EL,
+            cavity_params=None,
+            dipole_params=None,
+            initial_state=QDState.G,
+        )
 
         # Act
         H = qd.build_hamiltonians(dims)
@@ -216,7 +231,12 @@ class TestQuantumDot(unittest.TestCase):
             "N[mode0]": "N0"
         }
 
-        qd = QuantumDot(self.EL, cavity_params=None, dipole_params=None)
+        qd = QuantumDot(
+            self.EL,
+            cavity_params=None,
+            dipole_params=None,
+            initial_state=QDState.G,
+        )
 
         dims = [4, 2, 2]
         C = qd.qutip_collapse_operators(dims)
@@ -249,7 +269,12 @@ class TestQuantumDot(unittest.TestCase):
         }
         DecayModelMock.return_value.compute.return_value = {"L_X1_G": 1.0}
 
-        qd = QuantumDot(self.EL, cavity_params=None, dipole_params=None)
+        qd = QuantumDot(
+            self.EL,
+            cavity_params=None,
+            dipole_params=None,
+            initial_state=QDState.G,
+        )
         self.assertEqual(qd.context["idq"](None), "ctx1")
 
         # After registering a new mode, context should refresh

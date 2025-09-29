@@ -78,8 +78,19 @@ class Diagnostics(DiagnosticsProvider):
     # ---------------- internals ----------------
     def _mode_label_to_rate_per_s(self, label: str) -> float:
         """
-        Map a mode label to an effective radiative rate in 1/s.
-        Falls back to 0.0 if unavailable.
+        Map a mode label to an effective ratiavive rate (1/s)
+
+        Handles both fine-structure-resolved labels and combined labels.
+
+        Parameters
+        ----------
+        label: str
+            Mode label used by the registry
+
+        Returns
+        -------
+        float
+            Radiative rate in 1/s. Returns 0.0 if mapping is unknown.
         """
         g = self._g  # assumed in 1/s
         # fine-structure resolved labels
@@ -106,7 +117,18 @@ class Diagnostics(DiagnosticsProvider):
         return 0.0
 
     def _mode_transitions_by_label(self) -> dict[str, str]:
-        """Return {label: transition_name} for each intrinsic mode."""
+        """
+        Build a map from mode labels to transition names.
+
+        Uses `self._modes.intrinsic` if present, otherwise uses
+        `self._modes.modes`. Each label reports the `.tranistion.name`
+        or `UNKNOWN` if missing.
+
+        Returns
+        -------
+        dict[str, str]
+            Mapping {label: transition_name}
+        """
         modes = getattr(self._modes, "intrinsic", None) or self._modes.modes
         out: dict[str, str] = {}
         for i, m in enumerate(modes):
@@ -116,22 +138,35 @@ class Diagnostics(DiagnosticsProvider):
         return out
 
     def _delta_rad_per_s(self) -> float:
-        """Compute splitting frequency.
+        """
+        Compute the fine-structure splitting frequency in rad/s.
 
-        Returns:
-            Splitting frequency Delta = |FSS| / hbar in rad/s.
+        Uses the `fss` parameters in eV and converts using e/hbar
+
+        Returns
+        -------
+        float
+            Delta = |fss| * e/hbar (rad/s)
         """
         FSS_eV = float(getattr(self._EL, "fss", 0.0))
         return abs(FSS_eV) * _E_OVER_HBAR
 
     def _pair_linewidth(self, which: Literal["early", "late", "avg"]) -> float:
-        """Compute effective linewidth.
+        """
+        Effective linewidth for a photon pair, in Hz.
 
-        Args:
-            which: Either "early", "late", or "avg".
+        Parameters
+        ----------
+        which: {"early", "late", "avg"}
+          - "early": uses XX->X rtaes (L_XX_X1, L_XX_X2)
+          - "late": uses X->G rtaes (L_X1_G, L_X2_G)
+          - "avg": average of the rates
 
-        Returns:
-            Effective linewidth gamma_eff (1/s).
+        Returns
+        -------
+        float
+            0.5 * (gamma1+gamma2) for the chosen pair. Returns 0.0 if
+            inputs are not available
         """
         g, s = self._g, 1.0
         if s <= 0.0:
@@ -148,7 +183,29 @@ class Diagnostics(DiagnosticsProvider):
     def _ensure_dense_normalized(
         self, rho: Qobj | np.ndarray, dims: list[int]
     ) -> np.ndarray:
-        """Return a dense, trace-1 matrix matching `dims`."""
+        """
+        Returns a dense, trace-1 density matrix matching `dims`.
+
+        Validates shape so that it corresponds to the prod(dims)
+        and normalizes by trace.
+
+        Parameters
+        ----------
+        rho: qutip.Qobj or np.ndarray
+            Density matrix in QuTiP or numpy
+        dims: list[int]
+            Local dimensions (full Hilbert space)
+
+        Returns
+        -------
+        np.ndarray
+            Complex array (square matrix) with unit trace.
+
+        Raises
+        ------
+        VauleError
+            If shape is incompatible or the trace is non-positive
+        """
         R = rho.full() if isinstance(rho, Qobj) else np.asarray(rho)
         D = int(np.prod(dims))
         if R.shape != (D, D):
@@ -164,7 +221,23 @@ class Diagnostics(DiagnosticsProvider):
     def _pt_on_subsystems(
         self, R: np.ndarray, dims: list[int], sys_indices: list[int]
     ) -> np.ndarray:
-        """Partial transpose on subsystems in `sys_indices`."""
+        """
+        Partial trnspose on the specified subsystems.
+
+        Parameters
+        ----------
+        R: numpy.ndarray
+            Density matrix (D,D) as `numpy.ndarray`
+        dimes: list[int]
+            Local dimensions
+        sys_indices: list[int]
+            Indices of subsystems to transpose
+
+        Returns
+        -------
+        np.ndarray
+            Matrix after partial transpose on the requested subsystem
+        """
         M = len(dims)
         tens = R.reshape(dims + dims)  # ket: 0..M-1, bra: M..2M-1
         for k in sys_indices:
@@ -178,12 +251,28 @@ class Diagnostics(DiagnosticsProvider):
         early_idxs: list[int],
         late_idxs: list[int],
     ) -> tuple[float, float]:
-        """Compute log-negativity and its error for the (early)|(late) cut.
+        """
+        Log-negativity for the early|late partition.
 
-        Returns:
-            Tuple (E_N, err_log_neg) with
-            E_N = log2(|| rho^{T_late} ||_1),
-            err_log_neg = max(0, 1 - E_N).
+        Performs a partial transpose on the "late" indices, computes
+        the trace via singular values, and returns log2(norm).
+        An auxiliary error measure `max(0,1-E_N)` is also returned.
+
+        Parameters
+        ----------
+        rho_phot: qutip.Qobj or numpy.ndarray
+            Photonic density matrix (QD traced out)
+        dims_phot: list[int]
+            Local photonic dimensions (no QD in this cut).
+        early_idxs: list [int]
+            Indices of early modes
+        late_idxs: list[int]
+            Indices of late modes
+
+        Returns
+        -------
+        tuple[float, float]
+            (E_N, err), (log_negativity, deviation from 1)
         """
         R = self._ensure_dense_normalized(rho_phot, dims_phot)
         Rpt = self._pt_on_subsystems(R, dims_phot, late_idxs)
@@ -193,22 +282,25 @@ class Diagnostics(DiagnosticsProvider):
         err = float(max(0.0, 1.0 - E_N))
         return E_N, err
 
-    # ---------------- API ----------------
-
     def effective_overlap(
         self, which: Literal["early", "late", "avg"] = "late"
     ) -> float:
-        """Compute overlap under fine-structure splitting.
+        """
+        Overlap <psi_H|psi_V>
 
-        The overlap is defined as:
+        Uses gamma (effective linewidth) for the chosen pair and
+        Delta=FSS/habr.
+        Returns gamma/sqrd(gamma^2+Delta^2), clamped to [0,1]
 
-            |<psi_H | psi_V>| = gamma / sqrt(gamma^2 + Delta^2)
+        Parameters
+        ----------
+        which: {"early", "late", "avg"}, optional
+            Which pari linewidth to use, default "late"
 
-        Args:
-            which: Which photon pair to use ("early", "late", or "avg").
-
-        Returns:
-            Overlap in [0, 1]. If gamma <= 0, returns 0.
+        Returns
+        -------
+        float
+            Overlap in [0,1]. Returns 0.0
         """
         gamma = self._pair_linewidth(which)
         if gamma <= 0.0:
@@ -218,7 +310,19 @@ class Diagnostics(DiagnosticsProvider):
         return float(max(0.0, min(1.0, gamma / denom)))
 
     def _transition_energy_pair_eV(self, tr: Transition) -> tuple[float, float]:
-        """Return initial and final energies for a transition."""
+        """
+        Initial and final energies (eV) for a given transition label.
+
+        Parameters:
+        -----------
+        tr: Transition
+            Transition enum with `.name`
+
+        Returns
+        -------
+        tuple[float, float]
+            (E_i, E_f) in eV
+        """
         EL = self._EL
         G = 0.0
         fss = float(getattr(EL, "fss", 0.0))
@@ -246,13 +350,19 @@ class Diagnostics(DiagnosticsProvider):
     def _central_frequency_from_transition(
         self, tr: Transition
     ) -> dict[str, float]:
-        """Compute central frequency for a transition.
+        """
+        Central frequency for a transition
 
-        Returns:
-            dict with keys:
-                - omega_rad_s: Angular frequency (rad/s)
-                - freq_Hz: Frequency in Hz
-                - lambda_m: Wavelength in meters (inf if zero)
+        Computes angular frequency, frequency and wavelength.
+
+        Parameters
+        ----------
+        tr: Transition
+            Transition object
+
+        Returns
+        -------
+        dict[str, float]
         """
         Ei_eV, Ef_eV = self._transition_energy_pair_eV(tr)
         dE_eV = abs(Ei_eV - Ef_eV)
@@ -272,6 +382,13 @@ class Diagnostics(DiagnosticsProvider):
         }
 
     def central_frequencies_by_mode(self) -> dict[str, dict[str, float]]:
+        """
+        Central frequencies for each mode
+
+        Returns
+        -------
+        dict[str, dict[str, float]]
+        """
         """Return central frequencies for each intrinsic mode."""
         modes = getattr(self._modes, "intrinsic", None)
         if modes is None:
@@ -294,7 +411,31 @@ class Diagnostics(DiagnosticsProvider):
     def _label_and_pol_for_factor(
         self, factor_idx: int, offset: int
     ) -> tuple[str, str]:
-        """Map a photonic factor index to (mode_label, '+'|'-')."""
+        """
+        Map a photonic factor index to (mode_label, polarization).
+
+        PLUS first, then MINUS.
+        `offset` is subtracted before mapping.
+
+        Parameters
+        ----------
+        factor_idx: int
+            Global factor index (including offset)
+        offset: int
+            Number of non-photonic or earlyer factors to skip
+
+        Returns
+        -------
+        tuple[str, str]
+            (label, "+") or (label, "-")
+
+        Raises
+        ------
+        ValueError
+            If `factor_idx<offset`.
+        IndexError
+            If the derived mode index is out of range of the registry
+        """
         if factor_idx < offset:
             raise ValueError(
                 f"Invalid factor index {
@@ -317,12 +458,23 @@ class Diagnostics(DiagnosticsProvider):
     def _photon_number_metrics(
         self, rho_phot: Qobj | np.ndarray
     ) -> tuple[Dict[str, float], Dict[str, float]]:
-        """Photon number expectations and errors grouped for summary.
+        """
+        Photon-number expectations for early and late emissions with simple
+        error.
 
-        Returns:
-            (values, errors) where:
-                values = {"N_early": float, "N_late": float}
-                errors = {"early": |1 - N_early|, "late": |1 - N_late|}
+        Builds per-emission number operators by summing the projectors
+        from observable_provider, normalizes `rho_phot`, and evaluates
+        `N_early`, `N_late`. Errors are |1-N| for each emission.
+
+        Parameters
+        ----------
+        rho_pho: qutip.Qobj or numpy.ndarray
+            Density matrix with QD traced out
+
+        Returns
+        -------
+        tuple[dict[str, float], dict[str, float]]
+            (values, errors)
         """
         early_facts, late_facts, _p, _m, dims_phot, offset = (
             infer_index_sets_from_registry(self.qd, rho_has_qd=False)
@@ -371,6 +523,36 @@ class Diagnostics(DiagnosticsProvider):
     def mode_layout_summary(
         self, *, rho_phot: Qobj | np.ndarray | None = None
     ) -> Dict[str, Any]:
+        """
+        Summary of the mode layout, rates, overlaps, and optional state metrics
+        if the `rho_phot` is provided
+
+        Metrics
+        -------
+        - `num_intrinsic_modes`, `labels`, `mode_transitions`
+        - `central_frequencies` (omega, f, lambda) per mode
+        - `rates_per_s` and derived bandwidths (rad/s, Hz)
+        - `overlap_abs_{early, late, avg}` and `HOM_visibility` for each
+
+        If `rho_phot` given:
+        - `population_breakdown`
+        - `photon_numebrs` for emissions
+        - `entanglement` characteristics (log_negativity, conditional
+           log_negativity on 2-photon)
+        - `purity` (unconditional, contidional)
+        - `probabilities` (p_two_photon)
+        - `bel-component`
+
+        Parameters
+        ----------
+        rho_phot: qutip.Qobj or np.ndarray, optional
+            Density matrix with QD traced out (only photonic part remaining)
+
+        Returns
+        -------
+        dict[str, Any]
+            A structured dictionary of scalar metrics and per-mode summaries.
+        """
         reg = build_registry(self.qd, self._modes, self._observable_provider)
 
         oc = OverlapCalculator(

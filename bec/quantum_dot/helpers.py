@@ -6,10 +6,49 @@ def infer_index_sets_from_registry(
     qd, *, rho_has_qd: bool = False, factor_dim: Optional[int] = None
 ) -> Tuple[List[int], List[int], List[int], List[int], List[int], int]:
     """
-    Return index lists for early/late and +/- factors, and the per-factor dims list.
-    factor_dim: per-polarization Fock dimension (e.g., N_cut+1). If None, try to infer.
+    Infer photonic factor indices for early/late emissions and polarizations
+    from the mode registry, along with per-factor dimension list and offset.
+
+    The function inspects `qd.modes.modes` and looks for intrinsic
+    transitions to decide whether the redistry represents a
+    4 mode layout or 2 mode layout (FSS dependent).
+
+    indices are assigned por mode and polarizations as pairs
+      `plus_index  = offset + 2 * i_mode`
+      `minus_index = offset + 2 * i_mode + 1`
+
+    where `i_mode` is the mode's index in the registry and `offset`
+    is 1 if `rho_has_qd=True` (photonic parts start after the QD mode)
+    otherwise `offset=0`.
+
+    Parameters
+    ----------
+    qd: QuantumDot (here Any)
+    rho_has_qd: bool, optional
+    factor_dim: int, optional
+        Per polarization Fock dimensions (usually 2)
+
+    Returns
+    -------
+    tuple[list[int], list[int], list[int], list[int], list[int], int]
+        A tuple with 6 elements
+        - early_modes
+        - late_modes
+        - plus_modes
+        - minus_modes
+        - dims
+        - offset
+
+    Raises
+    ------
+    VauleError
+        If the layout cannot be infered
+
+    Notes
+    -----
+    - Factor ordering per mode is always (plus, minus)
+    - The returned `dims` length equals `len(early_modes) + len(late_modes)`.
     """
-    # ------- figure out per-factor dimension -------
     if factor_dim is None:
         # Try a few common locations/names
         ncut = (
@@ -23,11 +62,9 @@ def infer_index_sets_from_registry(
             except Exception:
                 factor_dim = None
         if factor_dim is None:
-            # Absolute last resort: assume qubit-like truncation
             factor_dim = 2
     d = int(factor_dim)
 
-    # ------- existing logic (unchanged) to decide 2-mode vs 4-mode and indices -------
     offset = 1 if rho_has_qd else 0
 
     def pm_indices(i_mode: int) -> Tuple[int, int]:

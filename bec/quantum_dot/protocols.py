@@ -83,7 +83,9 @@ class CollapseProvider(Protocol):
 
 class ObservableProvider(Protocol):
     def qd_projectors(self, dims: List[int]) -> Dict[str, Qobj]: ...
-    def light_mode_projectors(self, dims: List[int]) -> Dict[str, Qobj]: ...
+    def light_mode_projectors(
+        self, dims: List[int], include_qd: bool
+    ) -> Dict[str, Qobj]: ...
 
 
 class DiagnosticsProvider(Protocol):

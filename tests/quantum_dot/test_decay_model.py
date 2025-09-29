@@ -76,7 +76,6 @@ class TestDecayModel(unittest.TestCase):
         g_free = model_free.compute()
         g_cav = model_cav.compute()
 
-        # For all transitions with nonzero ω, cavity rates should be strictly larger
         for key in g_free:
             if g_free[key] > 0.0:
                 self.assertGreater(g_cav[key], g_free[key])
