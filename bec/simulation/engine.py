@@ -4,9 +4,8 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 import numpy as np
 from qutip import Qobj
-from bec.light.classical import ClassicalTwoPhotonDrive
 from bec.light.detuning import two_photon_detuning_profile
-from bec.params.transitions import Transition, TransitionType
+from bec.params.transitions import TransitionType
 from bec.quantum_dot import QuantumDot
 from bec.simulation.qd_traces import QDTraces
 from bec.simulation.collapse_composer import DefaultCollapseComposer
