@@ -41,7 +41,7 @@ class QuantumInputsScenario(Scenario):
 
 @dataclass
 class HybridScenario(Scenario):
-    """Compose both quantum inputs and a classical 2γ drive."""
+    r"""Compose both quantum inputs and a classical 2\gamma drive."""
 
     inputs: Iterable[LightMode]
     drive: ClassicalTwoPhotonDrive
