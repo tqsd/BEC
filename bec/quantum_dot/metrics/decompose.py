@@ -8,16 +8,60 @@ from .linops import ensure_rho
 
 @dataclass(frozen=True)
 class PopulationDecomposer:
+    """
+    Decompose a photonic state into vacuum (p0), single-photon total (p1_total),
+    exact two-photon (p2_exact), and a residual multiphoton probability.
+
+    The projectors are constructed from the registry as:
+      - P0: product over factors of the per-factor vacuum projector P0[f]
+      - P1_total: sum over factors f of P1[f] times the product of P0[j] for all j != f
+      - P2: provided externally as an argument to `p0_p1_p2_exact_multi`
+
+    The multiphoton remainder is computed as:
+        p_multiphoton = max(0, 1 - (p0 + p1_total + p2_exact))
+
+    Parameters
+    ----------
+    reg : PhotonicRegistry
+        Registry providing:
+          - dims_phot: list of local photonic dimensions
+          - I_phot: identity operator on the photonic space (Qobj)
+          - proj0_by_factor: dict[int, Qobj] of per-factor vacuum projectors,
+            each extended to the full photonic space
+          - proj1_by_factor: dict[int, Qobj] of per-factor one-photon projectors,
+            each extended to the full photonic space
+    """
+
     reg: PhotonicRegistry
 
     def _Pi0_all(self) -> Qobj:
+        """
+        Projector onto the global photonic vacuum.
+
+        Returns
+        -------
+        qutip.Qobj
+            P0 = prod_f P0[f], as a CSR operator with dims [dims_phot, dims_phot].
+        """
         P = self.reg.I_phot
         for f in self.reg.proj0_by_factor.keys():
             P = (P * self.reg.proj0_by_factor[f]).to("csr")
         return P
 
     def _Pi1_total(self) -> Qobj:
-        # Σ_f P1[f] Π_{j≠f} P0[j]
+        r"""
+        Projector onto the subspace with exactly one photon across all factors.
+
+        Constructed as:
+
+        .. math::
+            \sum_f P_1[f] * \prod_{j != f} P_0[j]
+
+        Returns
+        -------
+        qutip.Qobj
+            P1_total as a CSR operator with dims [dims_phot, dims_phot].
+        """
         out = self.reg.I_phot * 0.0
         for f in self.reg.proj1_by_factor.keys():
             term = self.reg.proj1_by_factor[f]
@@ -31,6 +75,39 @@ class PopulationDecomposer:
     def p0_p1_p2_exact_multi(
         self, rho_phot: Qobj | np.ndarray, P2: Qobj
     ) -> dict:
+        r"""
+        Decompose a photonic density matrix into p0, p1_total, p2_exact, and
+        residual multiphoton.
+
+        The input state is validated and normalized on the photonic space
+        using `ensure_rho`.
+        Probabilities are computed as traces of the corresponding projectors:
+        .. math::
+            p_0 = \text{Tr}[P_0 R], p_{1,total} = \text{Tr}[P_{1,total} R], p_{2,exact} = \text{Tr}[P_2 R]
+
+        The remainder
+            p_multiphoton = max(0, 1 - (p0 + p1_total + p2_exact))
+        captures probability outside these subspaces.
+
+        Parameters
+        ----------
+        rho_phot : qutip.Qobj or numpy.ndarray
+            Photonic density matrix (possibly unnormalized); validated by
+            `ensure_rho`.
+        P2 : qutip.Qobj
+            Projector onto the exact two-photon subspace of interest, defined
+            on the same photonic space.
+
+        Returns
+        -------
+        dict
+            {
+              "p0": float,
+              "p1_total": float,
+              "p2_exact": float,
+              "p_multiphoton": float
+            }
+        """
         R = ensure_rho(rho_phot, self.reg.dims_phot)
         Rq = Qobj(R, dims=[self.reg.dims_phot, self.reg.dims_phot]).to("csr")
 

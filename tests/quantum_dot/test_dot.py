@@ -2,7 +2,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-# exported by bec/quantum_dot/__init__.py
 from bec.operators.qd_operators import QDState
 from bec.quantum_dot import QuantumDot
 
@@ -195,7 +194,7 @@ class TestQuantumDot(unittest.TestCase):
         self.assertAlmostEqual(coeff2(2.0), 0.3 * (2.0**2))
 
         # Underlying builder calls
-        hams.fss.assert_called_once_with(dims)
+        hams.fss.assert_called_once_with(dims, 1.0)
         hams.lmi.assert_called_once_with("m_single", dims)
         hams.tpe.assert_called_once_with("m_tpe", dims)
 
@@ -248,7 +247,7 @@ class TestQuantumDot(unittest.TestCase):
         self.assertEqual(Pm, {"N[mode0]": "N0"})
 
         CollapseBuilderMock.return_value.qutip_collapse_ops.assert_called_once_with(
-            dims
+            dims, 1.0
         )
         ObservablesBuilderMock.return_value.qd_projectors.assert_called_once_with(
             dims

@@ -1,4 +1,3 @@
-# bec/quantum_dot/mode_registry.py
 from __future__ import annotations
 from typing import Any, List
 import numpy as np

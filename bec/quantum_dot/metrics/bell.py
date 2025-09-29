@@ -7,12 +7,41 @@ from .linops import ensure_rho
 
 @dataclass(frozen=True)
 class BellAnalyzer:
+    r"""
+    Polarization Bell analysis on a post-selected two-photon state.
+
+    This analyzer aggregates spectral emissions into four polarization basis
+    kets:
+    - |e+, l+>, |e+,l->, |e-,l+>, |e-,l->
+
+    Using the photonic registry, it builds the kets, extracts diagonal
+    weights on the cross/parallel subspaces, computes the cross coherence
+    between |e+,l-> and |e-,l+> and reports a simple Bell fidelity upper
+    bound
+    .. math::
+        F_{max} = 0.5 (p_\pm + p_\mp) +|\langle e_+, l_- | R | e_-, l_+\rangle |
+
+    Parameters:
+    -----------
+    reg: PhotonicRegistry
+        Registry dsecribing the photonic Hilbert space
+        (dims_phot, early_factors, late_factors, offset)
+    """
+
     reg: PhotonicRegistry
 
     # ---------- helpers ----------
 
     def _all_pm_indices(self):
-        """Return lists of factor indices for early/late and +/- across ALL branches."""
+        """
+        Compute early/late and +/- factor index lists.
+
+        Returns
+        -------
+        tuple[list[int], list[int], list[int], list[int]]
+            (early_plus, early_minus, late_plus, late_minus), with indices
+            measured in the photonic register including `offset`.
+        """
         off = self.reg.offset
         ef = sorted(self.reg.early_factors)
         lf = sorted(self.reg.late_factors)
@@ -23,17 +52,58 @@ class BellAnalyzer:
         return e_plus, e_minus, l_plus, l_minus
 
     def _ket_occ(self, occ_01):
+        """
+        Build a tensor-product ket with 0/1 occupation per photonic factor.
+
+        Parameters
+        ----------
+        occ_01 : sequence[int]
+            Length equals len(reg.dims_phot); each entry 0 or 1.
+
+        Returns
+        -------
+        qutip.Qobj
+            Ket on the photonic space with dims `[dims_phot]`.
+        """
         kets = [basis(d, n) for d, n in zip(self.reg.dims_phot, occ_01)]
         return tensor(kets).to("csr")
 
     def _ket_two_ones(self, i: int, j: int) -> Qobj:
+        """
+        Ket with exactly one photon in factors i and j (others in vacuum).
+
+        Parameters
+        ----------
+        i, j : int
+            Photonic factor indices.
+
+        Returns
+        -------
+        qutip.Qobj
+            |...1_i...1_j...> as a CSR ket.
+        """
         occ = [0] * len(self.reg.dims_phot)
         occ[i] = 1
         occ[j] = 1
         return self._ket_occ(occ)
 
     def _superposition_ket(self, first_idxs, second_idxs) -> Qobj:
-        """Equal-weight superposition over all |1_i, 1_j> with i in first_idxs, j in second_idxs."""
+        """
+        Equal-weight superposition of |1_i, 1_j> over i in first_idxs, j in
+        second_idxs.
+
+        If the index sets are empty, returns the zero ket on the correct space.
+
+        Parameters
+        ----------
+        first_idxs : iterable[int]
+        second_idxs : iterable[int]
+
+        Returns
+        -------
+        qutip.Qobj
+            Unit-normalized superposition ket (CSR).
+        """
         kets = [
             self._ket_two_ones(i, j) for i in first_idxs for j in second_idxs
         ]
@@ -47,7 +117,14 @@ class BellAnalyzer:
         return psi.unit()
 
     def _basis_vectors_aggregated(self):
-        """Return aggregated basis kets: |e+,l+>, |e+,l->, |e-,l+>, |e-,l->."""
+        """
+        Aggregated polarization basis kets.
+
+        Returns
+        -------
+        tuple[qutip.Qobj, qutip.Qobj, qutip.Qobj, qutip.Qobj]
+            (|e+,l+>, |e+,l->, |e-,l+>, |e-,l->) as CSR kets.
+        """
         e_p, e_m, l_p, l_m = self._all_pm_indices()
         ket_pp = self._superposition_ket(e_p, l_p)
         ket_pm = self._superposition_ket(e_p, l_m)
@@ -55,16 +132,37 @@ class BellAnalyzer:
         ket_mm = self._superposition_ket(e_m, l_m)
         return ket_pp, ket_pm, ket_mp, ket_mm
 
-    # ---------- stable numeric core (numpy inner products) ----------
-
     @staticmethod
     def _as_np(x: Qobj) -> np.ndarray:
-        """Dense numpy array, shape (D,1) or (D,D)."""
+        """
+        Convert Qobj or array-like to a dense numpy array.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape (D, 1) for kets or (D, D) for operators.
+        """
         a = x.full() if isinstance(x, Qobj) else np.asarray(x)
         return np.asarray(a)
 
     def _diag_elem_np(self, Rq: Qobj, ket: Qobj) -> float:
-        """<ket| R |ket> computed via numpy (robust to dims/types)."""
+        """
+        Compute <ket| R |ket> using numpy, robust to dims/types.
+
+        Returns 0.0 if `ket` has zero norm.
+
+        Parameters
+        ----------
+        Rq : qutip.Qobj
+            Density matrix on the photonic space.
+        ket : qutip.Qobj
+            State ket on the same space.
+
+        Returns
+        -------
+        float
+            Real expectation value.
+        """
         if ket.norm() == 0.0:
             return 0.0
         psi = self._as_np(ket)  # (D,1)
@@ -73,7 +171,25 @@ class BellAnalyzer:
         return float(np.real(val[0, 0]))
 
     def _offdiag_np(self, Rq: Qobj, bra: Qobj, ket: Qobj) -> complex:
-        """<bra| R |ket> via numpy."""
+        """
+        Compute <bra| R |ket> using numpy.
+
+        Returns 0 if either vector has zero norm.
+
+        Parameters
+        ----------
+        Rq : qutip.Qobj
+            Density matrix on the photonic space.
+        bra : qutip.Qobj
+            Bra vector (as a ket object).
+        ket : qutip.Qobj
+            Ket vector.
+
+        Returns
+        -------
+        complex
+            Complex matrix element.
+        """
         if bra.norm() == 0.0 or ket.norm() == 0.0:
             return 0.0 + 0.0j
         phi = self._as_np(bra)
@@ -82,13 +198,39 @@ class BellAnalyzer:
         val = phi.conj().T @ R @ psi
         return complex(val[0, 0])
 
-    # ---------- main API ----------
-
     def analyze(self, rho_2ph):
         """
-        Analyze the post-selected two-photon state on polarization
-        (aggregating spectral branches per polarization).
-        Returns weights, cross-coherence (abs/phase), and Bell fidelity bound.
+        Analyze a post-selected two-photon polarization state.
+
+        The input is normalized (or renormalized) to the photonic subspace,
+        the four aggregated basis kets are built, and the following metrics
+        are returned:
+          - weights: p_pp, p_pm, p_mp, p_mm, and totals "parallel" (pp+mm)
+            and "cross" (pm+mp)
+          - coherence_cross: absolute value and phase (rad/deg) of
+            <e+,l-| R |e-,l+>
+          - bell_fidelity_max: F_max = 0.5*(p_pm + p_mp) + |coherence|
+
+        Parameters
+        ----------
+        rho_2ph : qutip.Qobj or array-like
+            Two-photon density matrix on the photonic space, or any array
+            broadcastable to that space. It is validated and normalized via
+            `ensure_rho(dims=self.reg.dims_phot)`.
+
+        Returns
+        -------
+        dict
+            {
+              "weights": {
+                  "p_pp", "p_pm", "p_mp", "p_mm",
+                  "parallel", "cross"
+              },
+              "coherence_cross": {
+                  "abs", "phase_rad", "phase_deg"
+              },
+              "bell_fidelity_max": float
+            }
         """
         R = ensure_rho(rho_2ph, self.reg.dims_phot)
         Rq = Qobj(R, dims=[self.reg.dims_phot, self.reg.dims_phot]).to("csr")
