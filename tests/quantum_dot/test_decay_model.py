@@ -15,8 +15,6 @@ class TestDecayModel(unittest.TestCase):
             "X2": 1.29,
             "XX": 2.58,
         }
-        # Time unit (seconds per simulation unit)
-        self.dt = 1e-9  # ns
 
         # Minimal cavity and dipole containers
         self.no_cavity = None
@@ -47,15 +45,14 @@ class TestDecayModel(unittest.TestCase):
 
     def test_raises_without_dipoleparams(self):
         with self.assertRaises(ValueError):
-            _ = DecayModel(self.el, self.no_cavity, None, self.dt)
+            _ = DecayModel(self.el, self.no_cavity, None)
 
     def test_compute_free_space_no_cavity_matches_formula(self):
-        model = DecayModel(self.el, self.no_cavity, self.dipole, self.dt)
+        model = DecayModel(self.el, self.no_cavity, self.dipole)
         gammas = model.compute()
 
         mu = self.dipole.dipole_moment_Cm
 
-        # Expected values per line (no Purcell, just γ0 * dt)
         expected = {}
         for key, (Ei, Ef) in {
             "L_XX_X1": (self.el["XX"], self.el["X1"]),
@@ -65,7 +62,7 @@ class TestDecayModel(unittest.TestCase):
         }.items():
             w = self._omega(Ei, Ef)
             g0 = self._gamma0(w, mu)
-            expected[key] = g0 * self.dt
+            expected[key] = g0
 
         for k in expected:
             np.testing.assert_allclose(
@@ -73,8 +70,8 @@ class TestDecayModel(unittest.TestCase):
             )
 
     def test_compute_with_cavity_is_enhanced_vs_free_space(self):
-        model_free = DecayModel(self.el, self.no_cavity, self.dipole, self.dt)
-        model_cav = DecayModel(self.el, self.cavity, self.dipole, self.dt)
+        model_free = DecayModel(self.el, self.no_cavity, self.dipole)
+        model_cav = DecayModel(self.el, self.cavity, self.dipole)
 
         g_free = model_free.compute()
         g_cav = model_cav.compute()
@@ -86,7 +83,7 @@ class TestDecayModel(unittest.TestCase):
 
     def test_zero_dipole_moment_yields_zero_rates(self):
         zero_mu = SimpleNamespace(dipole_moment_Cm=0.0)
-        model = DecayModel(self.el, self.cavity, zero_mu, self.dt)
+        model = DecayModel(self.el, self.cavity, zero_mu)
         g = model.compute()
         for val in g.values():
             self.assertEqual(val, 0.0)
@@ -96,7 +93,7 @@ class TestDecayModel(unittest.TestCase):
         el_bad = dict(self.el)
         el_bad["XX"] = el_bad["X1"]  # zero gap for XX->X1
 
-        model = DecayModel(el_bad, self.no_cavity, self.dipole, self.dt)
+        model = DecayModel(el_bad, self.no_cavity, self.dipole)
         g = model.compute()
 
         # L_XX_X1 must be zero; others remain positive
