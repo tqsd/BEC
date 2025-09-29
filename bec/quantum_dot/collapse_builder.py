@@ -11,6 +11,49 @@ from photon_weave.extra import interpreter
 
 
 class CollapseBuilder(CollapseProvider):
+    """
+    Builder for collapse (Lindblad) operators in quantum-dot simulations
+
+    This class uses decay rates (`gammas`), a symbolic operator context,
+    a KronPad utility, and a ModeProvider to construct the collapse
+    operators that describe spontaneous emission from quantum-dot into
+    photonic modes. The resulting operators are returend as QuTiP `Qobj`
+    matrices and are passed directly to solvers.
+
+    The builder supports two configurations:
+    - Two intrinsic modes (degenerate exciton case):
+      Uses a single internal mode for the XX->X transition and a single
+      internal mode for the X->G transition.
+    - Four intrinsic modes (splic exciton case):
+      Uses separate internal modes for XX->X1, XX->X2, X1->G, X2->G
+
+    Parameters
+    ----------
+    gammas: dict[str, float]
+        Mapping of symbolic decay labels (e.g. "L_XX_X1", "L_X1_G")
+        to their rates. Each rate is scaled by `sqrt(time_unit_s)` when
+        constructing operators.
+    context: dict[str, Any]
+        Context dictionary mapping cymbolic operator labels to callables.
+        Passed through the `interpreter`
+    kron: KronPad
+        Utility for padding local operators into the full Hilbert space
+    mode_provider: ModeProvider
+        Provider access to photonic modes (with source and transition
+        attributes). Determines which modes are used for each collapse
+        channel
+
+    Notes
+    -----
+    - The CollapseBuilder is used in the `QuantumDot` class and is not
+      meant to be used on its own.
+    - All collapse operators are returned as sparse `Qobj` in CSR format.
+    - The symbolic operator expressions are evaluated by
+      `photon_weave.extra.interpreter`, which must understand the keys
+      produced by `KronPad` and the quantum-dot context.
+
+    """
+
     def __init__(
         self,
         gammas: Dict[str, float],
