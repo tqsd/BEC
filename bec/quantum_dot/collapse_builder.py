@@ -59,6 +59,47 @@ class CollapseBuilder(CollapseProvider):
     def qutip_collapse_ops(
         self, dims: List[int], time_unit_s: float = 1.0
     ) -> List[Qobj]:
+        """
+        Build QuTiP collapse operators for the configured quantum-dot
+        to model decays and return them as Qobj matrices.
+
+        This function assembles symbolic operatr expressions that model
+        spontaneous-emission channels. It chooses between two layouts:
+
+        - If there are two intrinsic modes (degenerate exciton levels),
+          it expects a single internal mode for XX->X and a single
+          internal mode fox X->G, and builds two "add" expressions
+          (each the sum of two scaled, padded ladder operators).
+        - Otherwise it expects separate internal modes per branch (X1_XX,
+          X2_XX, G_X1, G_X2), and builds the two "add" expressions
+          accordingly.
+
+        Each symbolic expression is passed to `photon_weave.extra.interpreter`
+        with the context and dimensions. The interpreter returns a square
+        matrix (`jax.numpy.ndarray`) with dimensions equal to the product
+        of `dims`. Then we wrap the result as a QuTiP Qobj in CSR (compressed
+        sparse row) format with `dims=[dims, dims]`.
+
+        Parameters
+        ----------
+        dims: List[int]
+            Composite Hilbert-Space dimension in the same order used by the
+            interpreter and KronPad
+        time_unit_s: float, optional
+            Time scaling in seconds. Decay rates in `self._g` are scaled by
+            `sqrt(time_unit_s)` so that the collapse operators have the same
+            units for the chosen integration step.
+
+        Returns
+        -------
+        list[qupit.Qobj]
+            A list of collapse operators as QuTip Qobj matrices
+
+        Raises
+        ------
+        ValueError
+            If a required mode cannot be found in the provided ModeProvider.
+        """
         s = float(time_unit_s)
         if len(self._modes.intrinsic) == 2:
             i_xxx = self._modes.by_transition_and_source(
