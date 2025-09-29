@@ -6,25 +6,38 @@ from bec.quantum_dot.protocols import ModeProvider
 
 class ModeRegistry(ModeProvider):
     """
-    Registry of quantum-dot light modes.
+    Registry for quantum dot light modes
 
-    This class holds both **intrinsic** (internally defined) and **external**
-    (registered at runtime) `LightMode` instances, and exposes a unified
-    read-only `modes` view. It also stores the exciton rotation parameters
-    `(THETA, PHI)` that other components (e.g., context builders) may need.
+    This class stores two sets of modes:
+    - intrinsic: modes defined from the enregy level structure
+    - external: modes defined by the user (Not used in the current model)
+
+    It also keeps the exciton rotation parameters (THETA, PHI) that may be
+    needed by other components.
 
     Parameters
     ----------
-    intrinsic_modes : list[LightMode]
-        Built-in modes derived from energy levels (e.g., G<-->X1, G<-->X2,
-        X1<-->XX, X2<-->XX).
-    rotation_params : (float, float)
-        The exciton mixing angle and relative phase `(THETA, PHI)`.
+    intrinsic_modes: list[LightMode]
+        Modes derived from the energy levels of the Quantum Dot
+    rotation_params: (float, float)
+        Exciton mixing angle and relative phase as (THETA, PHI)
+
+    Attributes
+    ----------
+    THETA: float
+        Exciton mixing angle.
+    PHI: float
+        Exciton  relative phase.
 
     Notes
     -----
-    - Use `register_external()` to add runtime modes (e.g., laser drives).
-    - `modes` returns `intrinsic + external` in that order.
+    - The read-only property `modes` returns the concatenation
+    intrinsic + external
+    - Use `register_external` to add external modes and `reset`
+    to clear them (Methods are implmented, but model does not
+    support the use of external modes)
+
+
     """
 
     def __init__(
@@ -38,10 +51,26 @@ class ModeRegistry(ModeProvider):
 
     @property
     def intrinsic(self) -> List[LightMode]:
+        """
+        Intrinsic (built-in) modes
+
+        Returns
+        -------
+        list[lightMode]
+           Reference to the list of intrinsic modes.
+        """
         return self._intrinsic
 
     @property
     def external(self) -> List[LightMode]:
+        """
+        Externally registereg modes.
+
+        Returns
+        -------
+        List[LightMode]
+           Reference to the list of external modes.
+        """
         return self._external
 
     @property
