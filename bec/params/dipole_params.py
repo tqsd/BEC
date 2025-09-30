@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class DipoleParams:
-    """
+    r"""
     Transition dipole moment parameters for a quantum dot.
 
     Parameters
@@ -15,9 +15,9 @@ class DipoleParams:
 
     Notes
     -----
-    The spontaneous emission rate in free space scales with μ^2, where μ is the
+    The spontaneous emission rate in free space scales with \mu^2, where \mu is the
     transition dipole moment. In SI units, typical values for quantum dots are
-    on the order of 10^-29 to 10^-28 C·m.
+    on the order of 10^-29 to 10^-28 C.m .
     """
 
     dipole_moment_Cm: float  # in C·m
