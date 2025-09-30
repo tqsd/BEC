@@ -2,6 +2,9 @@ import re
 
 
 def parse_time_unit_s(u):
+    """
+    Time parsing function, used for plotting
+    """
     if isinstance(u, (int, float)):
         return float(u)
     s = str(u).strip().lower().replace("µ", "u")

@@ -5,7 +5,6 @@ import numpy as np
 
 from qsi.state import State, StateProp
 
-# Treat ASCII '-' and Unicode '−' as the same "minus/polarization-"
 _POL_MINUS_ALIASES = ("-", "−")
 _POL_PLUS_ALIASES = ("+",)
 
@@ -15,7 +14,6 @@ def _resolve_pol_symbol(sym: str, pol_map: Dict[str, str]) -> str:
     if sym in _POL_PLUS_ALIASES:
         return pol_map.get("+", pol_map.get("plus", "H"))
     if sym in _POL_MINUS_ALIASES:
-        # Try a few common keys so both '-' and '−' work
         return (
             pol_map.get("-", None)
             or pol_map.get("−", None)
@@ -110,7 +108,7 @@ def stateprops_from_qd_diagnostics(
     pol_map: Optional[Dict[str, str]] = None,
     wavelength_override_nm: Optional[Dict[str, float]] = None,
 ) -> List[StateProp]:
-    """
+    r"""
     Build light-mode StateProps in the *QD registry order*:
         for each diagnostics['labels'] entry → two factors ('+', '−').
 
@@ -128,7 +126,7 @@ def stateprops_from_qd_diagnostics(
     default_bandwidth_Hz : fallback bandwidth (Hz) when diagnostics has none.
     pol_map : mapping for '+' and '-'/'−' → 'H'/'V' or 'R'/'L', etc.
               Default: {"+":"H","-":"V","−":"V"}.
-    wavelength_override_nm : optional {label: λ_nm} to override inferred λ.
+    wavelength_override_nm : optional {label: lambda_nm} to override inferred lambda.
 
     Returns
     -------
@@ -177,9 +175,11 @@ def apply_prepare_from_scalar(
     *,
     normalize: bool = True,
 ) -> State:
-    """
+    r"""
     Construct a new State with the given factor layout and set:
-        ρ_out = Σ_i K_i K_i^†
+
+    .. math::
+        \rho_{out} = \sum_i K_i K_i^\dagger
     for a prepare-from-scalar channel (each K_i : C → H_out).
 
     Accepts K_i shapes:
@@ -191,7 +191,6 @@ def apply_prepare_from_scalar(
     if not kraus_ops:
         raise ValueError("kraus_ops must be non-empty.")
 
-    # Build container by joining factors (we'll overwrite .state below)
     out = State(layout[0])
     for p in layout[1:]:
         out.join(State(p))

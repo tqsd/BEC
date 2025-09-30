@@ -8,9 +8,11 @@ class DefaultObservableComposer(ObservableComposer):
     def compose_qd(
         self, qd: QuantumDot, dims: list[int], time_unit_s: float
     ) -> Dict[str, Qobj]:
+        """Quantum Dot hamiltonian terms"""
         return qd.qutip_projectors(dims)
 
     def compose_lm(
         self, qd: QuantumDot, dims: list[int], time_unit_s: float
     ) -> Dict[str, Qobj]:
+        """Light-Matter interaction, not used in this model"""
         return qd.qutip_light_mode_projectors(dims)

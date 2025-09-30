@@ -30,6 +30,19 @@ from .protocols import (
 
 @dataclass
 class SimulationConfig:
+    """
+    Solver configuration
+
+    Parameters
+    ----------
+    tlist: np.ndarray
+        1D array of solver time points (dimensionless solver unit)
+    trunc_per_pol: int, optional
+        Photonicfock truncation per polarization for each mode
+    time_unit_s: float, optional
+        Seconds per solver time unit
+    """
+
     tlist: np.ndarray
     trunc_per_pol: int = 2
     time_unit_s: float = 1.0
@@ -37,12 +50,22 @@ class SimulationConfig:
 
 class SimulationEngine:
     """
-    Orchestrates:
-      - scenario.prepare(qd)
-      - build space → rho0
-      - H, c_ops, e_ops
-      - mesolve
-      - pack results as QDTraces (same shape you already use)
+    High-level facade for the Quantum Dot simulation.
+
+    Responsibilities:
+    -----------------
+    1. Call `scenario.prepare(qd)` to create the modes and classical drive.
+    2. Build Hilbert space and initial state via `SpaceBuilder`
+    3. Compose Hamiltonians, collapse operators, and observables.
+    4. Select expectation operators and index layout.
+    5. Solve the master equation.
+    6. Put the results in `QDTraces` and optionally return final states.
+
+    Notes:
+    ------
+    - If a classical drive is present. its detuning profile is computed
+    and installed as a time-dependent function in physical seconds. The
+    drive coefficient returneb by `qutip_coeff` already includes the scaling.
     """
 
     def __init__(
@@ -69,9 +92,32 @@ class SimulationEngine:
         reduce_photonic: bool = True,
     ) -> Tuple[QDTraces, Optional[Qobj], Optional[Qobj]]:
         """
-        Like `run`, but also returns:
-        - rho_final: the final composite density matrix (QD ⊗ all Fock)
-        - rho_phot_final: the reduced photonic state with QD traced out (if requested)
+        Run the simulation and return traces and final states.
+
+        Parameters:
+        -----------
+        qd: QuantumDot
+            Prepared quantum-dot facade object to simulate
+        scenario: Scenario
+            The scenario to simulate
+        cfg: SimulationConfig
+            Time grid and solver scaling, plus Fock truncation
+        reduce_photonic: bool, optional
+            If True and the solver returns a final `Qobj`, also return
+            the reduced photonic staty by tracing out the QD subsystem
+
+        Returns
+        -------
+        traces: QDTraces
+            Time series for QD and photonic number populations and drive
+            diagnostics
+        rho_final: Qobj or None
+            Final joint state, if provided by the solver backend (qutip does
+            that)
+        rho_phot_final: Qobj or None
+            Reduced final state (QD traced out) when available and
+            `reduce_photonic` is True, otherwise None
+
         """
         # 1) install modes / classical drive
         qd.N_cut = cfg.trunc_per_pol

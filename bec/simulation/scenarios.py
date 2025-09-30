@@ -25,6 +25,8 @@ class ClassicalDriveScenario(Scenario):
 
 @dataclass
 class QuantumInputsScenario(Scenario):
+    """Not used by the current model"""
+
     inputs: Iterable[LightMode]
     name: str = "quantum-inputs"
 
@@ -41,7 +43,7 @@ class QuantumInputsScenario(Scenario):
 
 @dataclass
 class HybridScenario(Scenario):
-    r"""Compose both quantum inputs and a classical 2\gamma drive."""
+    """Not used by the current model"""
 
     inputs: Iterable[LightMode]
     drive: ClassicalTwoPhotonDrive
