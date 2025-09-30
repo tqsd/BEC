@@ -53,6 +53,7 @@ class LightMode:
       Providing both or neither raises a `ValueError`.
     - Conversion helpers are used to ensure consistent energy–wavelength
       relations.
+    - Excitation Drive is not considered in this model
     """
 
     wavelength_nm: Optional[float] = None
@@ -63,8 +64,7 @@ class LightMode:
     label: Optional[str] = None
     label_tex: Optional[str] = None
     role: TransitionRole = field(init=False, default=TransitionRole.SINGLE)
-    tpe_eliminated: Set[TransitionType] = field(
-        init=False, default_factory=set)
+    tpe_eliminated: Set[TransitionType] = field(init=False, default_factory=set)
     tpe_alpha_X1: float = 0.0
     tpe_alpha_X2: float = 0.0
     __id: uuid.UUID = field(init=False, default_factory=uuid.uuid4)

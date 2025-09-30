@@ -3,16 +3,49 @@ from scipy.constants import e as _e, hbar as _hbar
 
 
 def two_photon_detuning_profile(EL, drive, time_unit_s: float):
-    # time grid (solver units)
+    """
+    Computes the two photon detuning profile for a given drive and
+    Quantum dot EL parameters.
+
+    This function evaluates the effective two-photon detuning
+    between |XX> and |G>. The resonance frequency is derived
+    from the energy difference `EL.XX`.
+
+    Behavior:
+    ---------
+    - If `drive.laser_omega` is provided, the detuning is
+      computed as `Delta = 2*laser_omega - wXXG`
+    - otherwise it falls back to `drive.detuning` if it is a float
+    - If the drive has cached time grid, the detuning is returned
+      as array on the grid.
+    - If `drive.stark_kappa` is set, it multiplies the squared
+      envelope and shifts the detuning.
+
+    Arguments:
+    ----------
+    EL: EnergyLevels
+        Energy levels parameters
+    drive: TwoPhotonClassicalDrive
+        The drive definition
+    time_unit_s: float
+        The solver time unit
+
+    Return:
+    -------
+    tuple[np.ndarray|None, np.ndarray|None]
+        Solver time grid, and detuning values in solver units.
+
+    Notes:
+    ------
+    Kappa is included here but not actually used in this model, so this term
+    should be considered inactive.
+    """
     t = getattr(drive, "_cached_tlist", None)
-    # two-photon resonance frequency from levels (G=0, so just XX):
     wXXG = float(EL.XX) * _e / _hbar  # rad/s
 
     if getattr(drive, "laser_omega", None) is not None:
-        # compute Δ from user-given laser frequency
         Delta_2g = 2.0 * float(drive.laser_omega) - wXXG
     else:
-        # fall back to drive.detuning if user set it explicitly
         Delta_2g = (
             float(drive.detuning) if not callable(drive.detuning) else 0.0
         )

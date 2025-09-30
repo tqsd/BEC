@@ -1,5 +1,3 @@
-# bec/light/classical.py
-
 from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Optional, Callable, Dict, Any, Protocol, Union
@@ -23,23 +21,39 @@ DetuningFn = Callable[[float], float]
 
 @dataclass(frozen=True)
 class ClassicalTwoPhotonDrive:
-    r"""Two-photon drive with detuning.
+    """
+    Two-photon drive with optional detuning and JSON IO.
 
-    Mathematics:
-        Effective coefficient:
-        :math:`\Omega(t) = \Omega_0 \, f(t)`,
-        where :math:`f(t)` is the envelope and :math:`\Omega_0` is a scalar.
+    Definition:
+    -----------
+    A drive is defined by an envelope function f(t) and an amplitude
+    `omega0`. The QuTiP cofficient used in time-dependent Hamiltonians
+    is produced by `qutip_coeff`, which returns a callable in solver
+    time units.
 
-    Args:
-        envelope: Time-domain envelope (callable); if serializable, it can be saved/loaded.
-        omega0: Scalar multiplier for the envelope value.
-        detuning: Two-photon detuning (rad/s).
-        label: Optional name.
+    Serialization:
+    --------------
+    If the envelope is an instance of `SerializableEnvelope` the
+    object can be serialized with `to_dict` and reconstructed with
+    `from_dict`. For raf callables, use `from_callablen`.
 
-    Notes:
-        - For QuTiP, use :meth:`qutip_coeff` to get a ``(t, args)->float`` coefficient.
-        - Use :meth:`sample` to get a vectorized sample on a given ``tlist``.
-        - Use :meth:`to_dict` / :meth:`from_dict` for JSON IO (if the envelope is serializable).
+
+    Attributes:
+    -----------
+    envelope: Envelope
+        Time-domain function f(t_phys) returning a float.
+    omega0: float
+        Scalar amplitude multiplier for the envelope value.
+    detuning : float or DetuningFn
+        Two-photon detuning in rad/s (float)
+    label : str or None
+        Optional human readable label
+    laser_omega: float
+        Laser angular frequency
+    _cached_tlist: np.ndarray
+        Cached solver time grid
+    _raw_callable: Callable
+        Original callable passed via the `from_callable`
     """
 
     envelope: Envelope
@@ -54,11 +68,11 @@ class ClassicalTwoPhotonDrive:
     # optional legacy path for raw callables (kept here but not encouraged)
     _raw_callable: Optional[Callable[..., float]] = None
 
-    # --------- main API ---------
-
     def qutip_coeff(self, *, time_unit_s: float = 1.0) -> OmegaFn:
-        """Return (t', args)->Ω_solver(t') with Ω_solver = time_unit_s * Ω_phys(t_phys),
-        where t_phys = time_unit_s * t'.
+        """
+        Returnst a QuTiP compatible coefficient function
+
+        The solver time is passed by `time_unit_s`.
         """
         env = self.envelope
         om0 = float(self.omega0)
@@ -71,21 +85,55 @@ class ClassicalTwoPhotonDrive:
         return coeff
 
     def detuning_solver(self, *, time_unit_s: float = 1.0) -> float:
-        """Δ_solver = time_unit_s * Δ_phys (rad per solver-unit)."""
+        """
+        Returns detuning in solver units
+
+        Parameters:
+        -----------
+        time_unit_s: float
+            Solver time unit scaling
+
+        Returns:
+        --------
+        float
+            Solver time unit
+        """
         return float(time_unit_s) * float(self.detuning)
 
-    # (keep your sample(...) if you like, but be explicit about which units you want)
     def sample_solver(
         self, tlist_solver: np.ndarray, *, time_unit_s: float
     ) -> np.ndarray:
-        """Ω_solver(t') sampled on the solver grid."""
+        """
+        Sample Omega_solver(t_prime) on a solver grid
+
+        Arguments:
+        ----------
+        tlist_solver: np.ndarray
+            1D array of solver times
+        time_unit_s: seconds per solver time unit.
+
+        Returns:
+        --------
+        np.ndarray
+            1D numpy array with coefficents evaluated on thlist_solver
+        """
         coeff = self.qutip_coeff(time_unit_s=time_unit_s)
         return np.array([coeff(t, {}) for t in tlist_solver], dtype=float)
 
-    # --------- JSON IO (only if the envelope is serializable) ---------
-
     def to_dict(self) -> Dict[str, Any]:
-        """Serialize the drive; raises if the envelope is not serializable."""
+        """
+        Serialize the drive to a JSON serializable dictionary.
+
+        Returns:
+        --------
+        dict[str, Any]
+            Serializable dictonary
+
+        Raises:
+        -------
+        TypeError
+            If the envelope is not serializable.
+        """
         if not isinstance(self.envelope, SerializableEnvelope):
             raise TypeError("Envelope is not serializable; cannot to_dict().")
         return {
@@ -101,6 +149,17 @@ class ClassicalTwoPhotonDrive:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ClassicalTwoPhotonDrive":
+        """
+        Creates a drive from a dictionary produced by `to_dict`.
+
+        Arguments:
+        ----------
+        data: dict[str, Any]
+            Serializable dictionary produced by `to_dict` mehtod.
+        Notes:
+        ------
+        Uses `envelope_from_json` to reconstruct the envelope
+        """
         env = envelope_from_json(data["envelope"])
         return cls(
             envelope=env,
@@ -109,8 +168,6 @@ class ClassicalTwoPhotonDrive:
             label=data.get("label"),
             laser_omega=data.get("laser_omega"),
         )
-
-    # --------- convenience constructors ---------
 
     @classmethod
     def from_envelope_json(
@@ -122,6 +179,26 @@ class ClassicalTwoPhotonDrive:
         laser_omega: float = 0.0,
         label: Optional[str] = None,
     ) -> "ClassicalTwoPhotonDrive":
+        """
+        Creates a drive from an already serialized envelope JSON.
+
+        Arguments:
+        ----------
+        env_json: dict[str, Any]
+            JSON for a specific envelope
+        omega0: float
+            amplitude multiplier.
+        detuning: float
+            two-photon detuning.
+        laser_omega: float
+            central laser angular frequency
+        label: str
+            Optional label
+
+        Returns:
+        --------
+        ClassicalTwoPhotonDrive
+        """
         env = envelope_from_json(env_json)
         return cls(
             envelope=env,
@@ -139,7 +216,28 @@ class ClassicalTwoPhotonDrive:
         detuning: float = 0.0,
         label: Optional[str] = None,
     ) -> "ClassicalTwoPhotonDrive":
-        # Wrap a raw callable as an envelope
+        """
+        Creates a drive from raw callable.
+
+        Arguments:
+        ----------
+        omega_fn: Callable
+            Callable representing the envelope
+        detuning: float
+            Two photon detuning
+        label: Optional[str]
+            Optional string label
+
+        Returns:
+        --------
+        ClassicalTwoPhotonDrive
+
+        Notes:
+        ------
+        The callable is wrapped into a simple envelope which
+        is not JSON serializable.
+        """
+
         def env(t: float) -> float:
             try:
                 return float(omega_fn(t, None))  # type: ignore[misc]
@@ -155,9 +253,35 @@ class ClassicalTwoPhotonDrive:
         )
 
     def with_cached_tlist(self, tlist: np.ndarray) -> "ClassicalTwoPhotonDrive":
+        """
+        Returns a new instance with an updated cached time list.
+
+        Arguments:
+        ----------
+        tlist: np.ndarray
+            1D numpy array for solver times to cache
+
+        Returns:
+        --------
+        new ClassicalTwoPhotonDrive
+            with `_cached_tlist` replaced
+        """
         return replace(self, _cached_tlist=np.array(tlist, copy=True))
 
     def with_detuning(
         self, det: Union[float, DetuningFn]
     ) -> "ClassicalTwoPhotonDrive":
+        """
+        Returns a new instance with a different detuning.
+
+        Arguments:
+        ----------
+        det: float
+            Detuning parameter
+
+        Returns:
+        --------
+        new ClassicalTwoPhotonDrive
+            with detuning replaced
+        """
         return replace(self, detuning=det)
