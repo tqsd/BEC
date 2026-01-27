@@ -70,11 +70,6 @@ def _coupling_mag(
         base = 1.0
     else:
         base = float(abs(ctx.pol.coupling_weight(tr, E)))
-
-    # optional phonon renormalization
-    if ctx.phonons is not None:
-        B = float(ctx.phonons.polaron_B())
-        base *= max(0.0, min(1.0, B))
     return base
 
 
@@ -171,6 +166,18 @@ class DefaultDriveDecoder:
             time_unit_s=time_unit_s,
             n=self.policy.sample_points,
         )
+
+        wL_min = float(np.min(wL))
+        wL_max = float(np.max(wL))
+        wL_sweep = wL_max - wL_min
+
+        carrier = getattr(drv, "carrier", None)
+        delta = (
+            getattr(carrier, "delta_omega", None)
+            if carrier is not None
+            else None
+        )
+        is_chirped = bool(callable(delta))
 
         if ctx.bandwidth is not None:
             sigma_omega = float(
@@ -291,6 +298,11 @@ class DefaultDriveDecoder:
                                 drv, "preferred_kind", None
                             ),
                             "used_preference": bool(used_pref),
+                            "omegaL_samples_phys_rad_s": wL.tolist(),
+                            "omegaL_min_phys_rad_s": wL_min,
+                            "omegaL_max_phys_rad_s": wL_max,
+                            "omegaL_sweep_phys_rad_s": wL_sweep,
+                            "is_chirped": is_chirped,
                         },
                     )
                 )
@@ -313,6 +325,10 @@ class DefaultDriveDecoder:
                             "sigma_omega_phys_rad_s": float(sigma_omega),
                             "threshold_phys_rad_s": float(thresh),
                             "omegaL_samples_phys_rad_s": wL.tolist(),
+                            "omegaL_min_phys_rad_s": wL_min,
+                            "omegaL_max_phys_rad_s": wL_max,
+                            "omegaL_sweep_phys_rad_s": wL_sweep,
+                            "is_chirped": is_chirped,
                         },
                     )
                 )

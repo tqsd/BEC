@@ -1,70 +1,92 @@
+# bec/simulation/stages/hamiltonian_composition_photonweave.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+)
 
 import numpy as np
 
+# Your existing types
+# IR terms from HamiltonianBuilder
+from bec.quantum_dot.me.types import Term, TermKind
+from bec.quantum_dot.ir.ops import (
+    OpExpr,
+    OpExprKind,
+    EmbeddedKron,
+    QDOpRef,
+    FockOpRef,
+)  # IR ops
 
-from bec.params.transitions import Transition
-from bec.operators.qd_operators import QDState
-from bec.quantum_dot.dot import QuantumDot
-from bec.simulation.protocols import HamiltonianComposer
-from bec.simulation.types import DriveCoefficients, ResolvedDrive
-from bec.quantum_dot.me.types import HamiltonianTerm, HamiltonianTermKind
+# the coeff module you showed
+from bec.quantum_dot.me.coeff import ConstCoeff, CallableCoeff, CoeffExpr
+from bec.simulation.types import ResolvedDrive  # the resolved drive you showed
 
-# coeff utilities (your project types)
-from bec.quantum_dot.me.coeffs import as_coeff, scale, CoeffExpr
+
+Args = Mapping[str, Any]
 
 
 # -----------------------------------------------------------------------------
-# Transition mapping
+# Drive coefficients contract (minimal)
 # -----------------------------------------------------------------------------
 
 
-def _transition_to_bra_ket(tr: Transition) -> Tuple[QDState, QDState]:
+@dataclass(frozen=True)
+class DriveCoefficients:
     """
-    Map a transition identifier to the "raising" coherence operator |bra><ket|.
+    Coefficients are expected to already be in solver-time units:
+      coeff(t_solver, args) -> complex
 
-    Convention:
-      - For 1ph transitions: bra is excited, ket is lower.
-      - For 2ph virtual transition G_XX: bra is XX, ket is G.
-
-    Drive Hamiltonian is typically:
-        H_drive(t) = Omega(t) * (A + A.dag())
-    with A = |bra><ket|, or a coherent sum of such terms.
+    omega_by_transition:
+      maps TransitionKey (string) -> CoeffExpr (Omega(t) in solver units)
+    omega_2ph:
+      optional, used for 2ph drives if you prefer a single coefficient channel
     """
-    if tr == Transition.G_X1:
-        return (QDState.X1, QDState.G)
-    if tr == Transition.G_X2:
-        return (QDState.X2, QDState.G)
-    if tr == Transition.X1_XX:
-        return (QDState.XX, QDState.X1)
-    if tr == Transition.X2_XX:
-        return (QDState.XX, QDState.X2)
-    if tr == Transition.G_X:
-        # Degenerate shorthand: treat as X2 for operator lookup (avoid relying on this if you use coherent decomposition)
-        return (QDState.X2, QDState.G)
-    if tr == Transition.X_XX:
-        # Degenerate shorthand: treat as XX<-X1 for operator lookup (avoid relying on this if you use coherent decomposition)
-        return (QDState.XX, QDState.X1)
-    if tr == Transition.G_XX:
-        return (QDState.XX, QDState.G)
 
-    raise ValueError(f"Unknown transition: {tr!r}")
+    omega_by_transition: Mapping[str, CoeffExpr] = field(default_factory=dict)
+    omega_2ph: Optional[CoeffExpr] = None
 
 
-def _transition_to_detuned_level(tr: Transition) -> QDState:
+# -----------------------------------------------------------------------------
+# Output HamiltonianTerm (numeric op + coeff)
+# -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class HamiltonianTermOut:
+    label: str
+    op: np.ndarray  # numeric matrix (dimensionless basis operator)
+    # None only if you truly mean "factor 1.0"
+    coeff: Optional[CoeffExpr] = None
+    meta: Dict[str, Any] = field(default_factory=dict)
+
+
+# -----------------------------------------------------------------------------
+# Materialization context
+# -----------------------------------------------------------------------------
+
+
+class OpMaterializeContext(Protocol):
     """
-    Choose which level projector gets the detuning term for this transition.
+    The composer must not know QuantumDot internals. It only asks for operators by key.
 
-    In rotating-frame + RWA style models, a common convention is detuning on
-    the "upper" (bra) state projector.
-
-    For 2ph G_XX, detuning goes on |XX><XX|.
+    You can implement this with PhotonWeave interpret, or with direct cached matrices.
+    The required invariant:
+      resolve_symbol(key, dims) returns the FULL embedded operator matrix of shape (D, D),
+      where D = prod(dims).
     """
-    bra, _ket = _transition_to_bra_ket(tr)
-    return bra
+
+    def resolve_symbol(self, key: str, dims: Sequence[int]) -> np.ndarray: ...
 
 
 # -----------------------------------------------------------------------------
@@ -74,24 +96,166 @@ def _transition_to_detuned_level(tr: Transition) -> QDState:
 
 @dataclass(frozen=True)
 class HamiltonianCompositionPolicy:
-    """
-    include_detuning_terms:
-        Emit detuning projector terms with coefficient from ResolvedDrive.detuning.
-
-    hermitian_drive:
-        If True, drive term operator is (A + A.dag()).
-        If False, drive term operator is A only.
-
-    split_components:
-        If True, emit one DRIVE HamiltonianTerm per ResolvedDrive component.
-        This is the recommended setting for your "drive decoder splits into components"
-        pipeline design.
-    """
-
+    # Emit detuning projector terms driven by ResolvedDrive.detuning.
     include_detuning_terms: bool = True
+
+    # Drive term operator is (A + A^dag) if True, else A only.
     hermitian_drive: bool = True
+
+    # Emit one DRIVE term per component.
     split_components: bool = True
-    build_drive_coeff_from_physical: bool = True
+
+    # Multiply drive coefficients by the component complex weight from decoder.
+    # If your drive-strength stage already bakes the weight in, set this False.
+    apply_component_weight: bool = True
+
+    # Apply the standard RWA convention: H_drive = (Omega/2) * (A + A^dag)
+    use_omega_over_2: bool = True
+
+
+# -----------------------------------------------------------------------------
+# Small helpers: coeff normalization and scaling
+# -----------------------------------------------------------------------------
+
+
+def _as_coeffexpr_from_detuning(
+    det: Callable[[float], float] | float,
+) -> CoeffExpr:
+    if callable(det):
+
+        def fn(t: float, args: Args) -> complex:
+            return complex(det(float(t)))
+
+        return CallableCoeff(fn=fn)
+    return ConstCoeff(value=complex(det))
+
+
+def _scale_coeff(c: CoeffExpr, s: complex) -> CoeffExpr:
+    if isinstance(c, ConstCoeff):
+        return ConstCoeff(value=c.as_complex() * complex(s))
+
+    def fn(t: float, args: Args) -> complex:
+        return complex(s) * complex(c(t, args))
+
+    return CallableCoeff(fn=fn)
+
+
+def _maybe_scale_omega(
+    c: CoeffExpr, policy: HamiltonianCompositionPolicy
+) -> CoeffExpr:
+    if policy.use_omega_over_2:
+        return _scale_coeff(c, 0.5 + 0.0j)
+    return c
+
+
+# -----------------------------------------------------------------------------
+# TransitionKey parsing
+# -----------------------------------------------------------------------------
+
+
+def _split_transition_key(tr_key: str) -> Tuple[str, str]:
+    """
+    TransitionKey expected like:
+      "G_X1", "G_X2", "X1_XX", "X2_XX", "G_XX"
+    Returns (lower, upper) in the sense lower->upper.
+    """
+    parts = tr_key.split("_")
+    if len(parts) != 2:
+        raise ValueError(f"TransitionKey must look like 'A_B', got {tr_key!r}")
+    return parts[0], parts[1]
+
+
+def _upper_level_from_transition_key(tr_key: str) -> str:
+    _low, up = _split_transition_key(tr_key)
+    return up
+
+
+def _coherence_symbol_for_transition(tr_key: str) -> str:
+    """
+    HamiltonianBuilder coherence basis uses keys like:
+      s_{bra}_{ket} where bra is "upper" and ket is "lower" for raising coherence.
+    For a transition key "G_X1" we want |X1><G| -> "s_X1_G".
+    """
+    low, up = _split_transition_key(tr_key)
+    return f"s_{up}_{low}"
+
+
+def _projector_symbol_for_level(level: str) -> str:
+    """
+    HamiltonianBuilder detuning basis uses:
+      s_{st}_{st}
+    for st in {X1, X2, XX} (no G projector in basis by default).
+    """
+    return f"s_{level}_{level}"
+
+
+# -----------------------------------------------------------------------------
+# OpExpr materialization (IR -> numeric matrix)
+# -----------------------------------------------------------------------------
+
+
+def _materialize_opexpr(
+    expr: OpExpr, ctx: OpMaterializeContext, dims: Sequence[int]
+) -> np.ndarray:
+    """
+    Materialize your OpExpr WITHOUT needing PhotonWeave's interpret format.
+    We only require ctx.resolve_symbol(symbol, dims) for primitives.
+
+    This supports:
+      PRIMITIVE: EmbeddedKron(qd=QDOpRef(key=...)) -> resolve_symbol(key)
+      SUM: sum child matrices
+      PROD: matrix product of child matrices
+      SCALE: scalar * child matrix (scalar must be numeric)
+    """
+    if expr.kind == OpExprKind.PRIMITIVE:
+        prim = expr.primitive
+        if prim is None:
+            raise ValueError(
+                "OpExprKind.PRIMITIVE requires primitive=EmbeddedKron"
+            )
+
+        # For now we support QDOpRef.key and QDOpRef.mat. If you also use FockOpRef in primitives,
+        # you should encode those into a unique symbol and support it in ctx.resolve_symbol.
+        if prim.qd.key is not None:
+            return np.asarray(
+                ctx.resolve_symbol(prim.qd.key, dims), dtype=complex
+            )
+
+        if prim.qd.mat is not None:
+            # If you embed raw matrices, ctx must know how to embed them.
+            # Easiest: require ctx to expose a symbol for this path; here we disallow it to avoid silent misuse.
+            raise ValueError(
+                "QDOpRef.mat is not supported by this materializer; provide a key instead."
+            )
+
+        raise ValueError("Invalid QDOpRef: requires key or mat")
+
+    if expr.kind == OpExprKind.SUM:
+        if not expr.args:
+            raise ValueError("SUM requires args")
+        acc = np.zeros((int(np.prod(dims)), int(np.prod(dims))), dtype=complex)
+        for a in expr.args:
+            acc = acc + _materialize_opexpr(a, ctx, dims)
+        return acc
+
+    if expr.kind == OpExprKind.PROD:
+        if not expr.args:
+            raise ValueError("PROD requires args")
+        acc = _materialize_opexpr(expr.args[0], ctx, dims)
+        for a in expr.args[1:]:
+            acc = acc @ _materialize_opexpr(a, ctx, dims)
+        return acc
+
+    if expr.kind == OpExprKind.SCALE:
+        if not expr.args or len(expr.args) != 1:
+            raise ValueError("SCALE requires exactly one arg")
+        s = expr.scalar
+        if s is None:
+            raise ValueError("SCALE requires scalar")
+        # Scalar must be numeric at this stage (already converted to solver units upstream if it had units).
+        return complex(s) * _materialize_opexpr(expr.args[0], ctx, dims)
+
+    raise ValueError(f"Unsupported OpExprKind: {expr.kind!r}")
 
 
 # -----------------------------------------------------------------------------
@@ -99,21 +263,18 @@ class HamiltonianCompositionPolicy:
 # -----------------------------------------------------------------------------
 
 
-class DefaultHamiltonianComposer(HamiltonianComposer):
+class DefaultHamiltonianComposer:
     """
-    Compose HamiltonianTerm objects from:
-      - QD Hamiltonian catalog (operators only)
-      - decoded drives (ResolvedDrive)
+    Compose concrete HamiltonianTermOut from:
+      - catalog: IR HamiltonianBuilder terms (static + basis)
+      - resolved: ResolvedDrive (already coupled/selected)
+      - drive_coeffs: coefficients in solver units
 
-    IMPORTANT design choice (per your pipeline):
-      - chirp / time-dependent laser frequency is represented via rd.detuning
-        (projector DETUNING terms), not via a phase in the drive coefficient.
-      - polarization only scales DRIVE coefficients via the component weights
-        in ResolvedDrive.components.
-
-    Therefore:
-      DRIVE coeff(t) ~ omega0 * envelope(t_phys) * component_weight
-      DETUNING coeff(t) ~ rd.detuning(t_solver)  (already includes chirp via delta_omega)
+    Convention:
+      - Drive operator is (A + A^dag) unless policy.hermitian_drive is False.
+      - Coefficient uses Omega/2 if policy.use_omega_over_2 is True.
+      - Detuning is represented via projector terms using ResolvedDrive.detuning (solver units).
+      - This stage does not decide coupling; it only assembles what ResolvedDrive says.
     """
 
     def __init__(self, policy: Optional[HamiltonianCompositionPolicy] = None):
@@ -122,382 +283,295 @@ class DefaultHamiltonianComposer(HamiltonianComposer):
     def compose(
         self,
         *,
-        qd: QuantumDot,
-        dims: List[int],
-        resolved: Tuple[ResolvedDrive, ...],
-        drive_coeffs: Dict[str, DriveCoefficients],
-        time_unit_s: float,
-        tlist: Optional[np.ndarray] = None,
-    ) -> List[HamiltonianTerm]:
-        catalog = qd.h_builder.build_catalog(
-            dims=dims, time_unit_s=time_unit_s)
+        catalog: Iterable[Term],
+        ctx: OpMaterializeContext,
+        dims: Sequence[int],
+        resolved: Sequence[ResolvedDrive],
+        drive_coeffs: Mapping[str, DriveCoefficients],
+    ) -> List[HamiltonianTermOut]:
+        # Split catalog terms by meta/type and build indices.
+        static_terms: List[Term] = []
+        projector_terms: Dict[str, Term] = {}  # level -> Term
+        # transition_key -> Term  (by meta) AND fallback by symbol
+        coherence_terms: Dict[str, Term] = {}
 
-        static_terms = [
-            t for t in catalog if t.kind == HamiltonianTermKind.STATIC
-        ]
-        detuning_catalog = [
-            t for t in catalog if t.kind == HamiltonianTermKind.DETUNING
-        ]
-        drive_catalog = [
-            t for t in catalog if t.kind == HamiltonianTermKind.DRIVE
-        ]
+        for t in catalog:
+            if t.kind != TermKind.H:
+                continue
 
-        proj_by_level = self._index_projectors(detuning_catalog)
-        coh_by_pair = self._index_coherences(drive_catalog)
+            meta = dict(getattr(t, "meta", {}) or {})
+            ttype = meta.get("type", None)
 
-        out: List[HamiltonianTerm] = []
-        out.extend(static_terms)
+            if ttype == "static":
+                static_terms.append(t)
+                continue
 
-        # Precompute drive base coeff expr per physical drive_id (so repeated components share one envelope callable)
-        for rd in resolved:
-            dc = drive_coeffs[rd.drive_id]
-            # ---- DRIVE TERMS ----
-            drive_terms = self._emit_drive_terms(
-                rd=rd,
-                coh_by_pair=coh_by_pair,
-                omega_by_tr=dc.omega_by_transition,
-                omega_2ph=dc.omega_2ph,
+            if ttype == "projector":
+                lvl = meta.get("level", None)
+                if isinstance(lvl, str) and lvl:
+                    projector_terms[lvl] = t
+                continue
+
+            if ttype == "coherence":
+                # Prefer transition_id (like "G_X1") when present; otherwise we can still use symbol keys.
+                tr_id = meta.get("transition_id", None) or meta.get(
+                    "transition", None
+                )
+                if isinstance(tr_id, str) and tr_id:
+                    coherence_terms[tr_id] = t
+                continue
+
+        out: List[HamiltonianTermOut] = []
+
+        # 1) Static terms: materialize op; if they contain SCALE nodes with numeric scalars, they are already included in op.
+        #    For simplicity we keep coeff=None here. If you want scalars in coeff channel, refactor SCALE extraction.
+        for t in static_terms:
+            op = _materialize_opexpr(t.op, ctx, dims)
+            out.append(
+                HamiltonianTermOut(
+                    label=t.label,
+                    op=op,
+                    coeff=None,
+                    meta=dict(getattr(t, "meta", {}) or {}),
+                )
             )
 
-            out.extend(drive_terms)
+        # 2) Drive + detuning terms from resolved drives.
+        for rd in resolved:
+            if rd.kind == "unresolved":
+                # Policy choice: skip unresolved or raise
+                raise ValueError(
+                    f"ResolvedDrive {
+                        rd.drive_id!r} has kind='unresolved'"
+                )
 
-            # ---- DETUNING TERMS ----
-            if self.policy.include_detuning_terms:
+            dc = drive_coeffs.get(rd.drive_id, None)
+            if dc is None:
+                raise KeyError(
+                    f"Missing DriveCoefficients for drive_id={
+                        rd.drive_id!r}"
+                )
+
+            # Determine components
+            comps: Tuple[Tuple[str, complex], ...]
+            if rd.components:
+                comps = tuple((str(k), complex(w)) for (k, w) in rd.components)
+            elif rd.transition is not None:
+                comps = ((str(rd.transition), 1.0 + 0.0j),)
+            else:
+                # A 2ph drive could choose to not set transition; fall back to candidates if needed.
+                raise ValueError(
+                    f"ResolvedDrive {
+                        rd.drive_id!r} has no components and no transition"
+                )
+
+            # DRIVE terms
+            if self.policy.split_components:
+                out.extend(
+                    self._emit_drive_terms_split(
+                        ctx, dims, rd, comps, dc, coherence_terms
+                    )
+                )
+            else:
+                out.extend(
+                    self._emit_drive_terms_summed(
+                        ctx, dims, rd, comps, dc, coherence_terms
+                    )
+                )
+
+            # DETUNING terms
+            if self.policy.include_detuning_terms and rd.detuning is not None:
                 out.extend(
                     self._emit_detuning_terms(
-                        rd=rd, proj_by_level=proj_by_level
+                        ctx, dims, rd, comps, projector_terms
                     )
                 )
 
         return out
 
     # -------------------------------------------------------------------------
-    # Coeff construction
+    # DRIVE emission
     # -------------------------------------------------------------------------
 
-    def _drive_base_coeff(
-        self, rd: ResolvedDrive, *, time_unit_s: float
-    ) -> CoeffExpr:
-        """
-        Base coefficient for a physical coherent drive, *without* polarization component weights.
-
-        Convention here:
-          Omega_base(t) = omega0 * envelope(t_phys)
-        with t_phys = time_unit_s * t_solver.
-
-        Notes:
-          - This is amplitude only (real, typically). If you later want a complex carrier phase,
-            add it here, but then DO NOT also represent it via detuning terms.
-        """
-        drv = rd.physical
-        env = drv.envelope
-        omega0 = float(getattr(drv, "omega0", 1.0))
-        s = float(time_unit_s)
-
-        def omega_base(
-            t_solver: float, args: Optional[Dict[str, Any]] = None
-        ) -> complex:
-            t_phys = s * float(t_solver)
-            return complex(0.5 * s * omega0 * float(env(t_phys)))
-
-        return as_coeff(omega_base)
-
-    def _detuning_coeff(self, rd: ResolvedDrive) -> Optional[CoeffExpr]:
-        """
-        Normalize rd.detuning into a CoeffExpr (callable).
-        rd.detuning is already in solver units; keep it that way.
-        """
-        if rd.detuning is None:
-            return None
-        return as_coeff(rd.detuning)
-
-    # -------------------------------------------------------------------------
-    # DRIVE: splitting into per-component terms
-    # -------------------------------------------------------------------------
-
-    def _drive_components(
-        self, rd: ResolvedDrive
-    ) -> Tuple[Tuple[Transition, complex], ...]:
-        """
-        Return canonical (transition, complex weight) tuples.
-
-        Handles:
-        - 1ph single: transition set, components empty -> [(transition, 1)]
-        - 1ph weighted: components provided -> return as-is
-        - 1ph_coherent: transition None, components has multiple -> return as-is
-        - 2ph: transition == G_XX, components empty -> [(G_XX, 1)]
-            (we still represent the "addressed transition" here; coefficient comes from omega_2ph)
-        """
-        comps = tuple(getattr(rd, "components", ()) or ())
-        if comps:
-            return comps
-
-        tr = getattr(rd, "transition", None)
-        if tr is not None:
-            return ((tr, 1.0 + 0j),)
-
-        # Backward compatibility: some code may only store kind in meta
-        kind = getattr(rd, "kind", None)
-        if kind is None:
-            meta = getattr(rd, "meta", {}) or {}
-            kind = meta.get("kind", None)
-
-        if str(kind) == "2ph":
-            # If a 2ph drive was emitted without transition, assume G_XX
-            return ((Transition.G_XX, 1.0 + 0j),)
-
-        raise ValueError(
-            "ResolvedDrive has neither transition nor components.")
-
-    def _emit_drive_terms(
+    def _emit_drive_terms_split(
         self,
-        *,
+        ctx: OpMaterializeContext,
+        dims: Sequence[int],
         rd: ResolvedDrive,
-        coh_by_pair: Mapping[Tuple[QDState, QDState], np.ndarray],
-        omega_by_tr: Mapping[Transition, CoeffExpr],
-        omega_2ph: Optional[CoeffExpr],
-    ) -> List[HamiltonianTerm]:
-        """
-        Emit DRIVE Hamiltonian terms using per-transition coefficients from the
-        drive-strength stage.
+        comps: Tuple[Tuple[str, complex], ...],
+        dc: DriveCoefficients,
+        coherence_terms: Mapping[str, Term],
+    ) -> List[HamiltonianTermOut]:
+        out: List[HamiltonianTermOut] = []
 
-        Contract:
-        - omega_by_tr[tr] is the (possibly complex) Omega_solver(t) coefficient for
-        that transition/component.
-        - omega_2ph is used only when rd.kind == "2ph".
-        - Apply Omega/2 convention here.
-        """
+        for tr_key, w in comps:
+            # Build coherence operator A = |upper><lower|
+            sym = _coherence_symbol_for_transition(tr_key)
 
-        # Special case: 2-photon effective drive uses omega_2ph
-        if getattr(rd, "kind", "1ph") == "2ph":
-            if omega_2ph is None:
-                raise KeyError(
-                    f"Missing omega_2ph for 2ph drive_id={rd.drive_id}."
-                )
+            # Use basis catalog when available (ensures it is drive-allowed), else resolve symbol directly.
+            if tr_key in coherence_terms:
+                A = _materialize_opexpr(coherence_terms[tr_key].op, ctx, dims)
+            else:
+                A = np.asarray(ctx.resolve_symbol(sym, dims), dtype=complex)
 
-            tr2 = rd.transition
-            if tr2 is None and rd.components:
-                tr2 = rd.components[0][0]
-
-            if tr2 != Transition.G_XX:
-                raise ValueError(
-                    f"2ph drive_id={
-                        rd.drive_id} expected Transition.G_XX, got {tr2!r}"
-                )
-
-            A = self._coherence_for_transition(Transition.G_XX, coh_by_pair)
-            Hop = (A + A.conj().T) if self.policy.hermitian_drive else A
-            coeff = scale(omega_2ph, 0.5)
-
-            return [
-                HamiltonianTerm(
-                    kind=HamiltonianTermKind.DRIVE,
-                    op=Hop,
-                    coeff=coeff,
-                    label=f"drive_{rd.drive_id}_2ph",
-                    meta={
-                        "type": "drive_2ph",
-                        "drive_id": rd.drive_id,
-                        "transition": str(Transition.G_XX),
-                        "candidates": [str(t) for t in rd.candidates],
-                        **dict(rd.meta),
-                    },
-                )
-            ]
-
-        if not self.policy.split_components:
-            raise NotImplementedError(
-                "split_components=False is not supported with per-transition coefficients yet. "
-                "Use split_components=True."
-            )
-
-        comps = self._drive_components(rd)
-
-        out: List[HamiltonianTerm] = []
-        for tr, w in comps:
-            A = self._coherence_for_transition(tr, coh_by_pair)
             Hop = (A + A.conj().T) if self.policy.hermitian_drive else A
 
-            if tr not in omega_by_tr:
-                raise KeyError(
-                    f"Missing drive coefficient for transition {tr} "
-                    f"(drive_id={rd.drive_id}). Available: {
-                        list(omega_by_tr.keys())}"
-                )
+            # Choose coefficient channel
+            if rd.kind == "2ph":
+                base = dc.omega_2ph
+                if base is None:
+                    raise KeyError(
+                        f"Missing omega_2ph for 2ph drive_id={
+                            rd.drive_id!r}"
+                    )
+            else:
+                base = dc.omega_by_transition.get(tr_key, None)
+                if base is None:
+                    raise KeyError(
+                        f"Missing omega coefficient for transition {tr_key!r} "
+                        f"(drive_id={rd.drive_id!r}). Available: {
+                            list(dc.omega_by_transition.keys())}"
+                    )
 
-            coeff = scale(omega_by_tr[tr], 0.5)
+            coeff = _maybe_scale_omega(base, self.policy)
+
+            if self.policy.apply_component_weight:
+                coeff = _scale_coeff(coeff, w)
 
             out.append(
-                HamiltonianTerm(
-                    kind=HamiltonianTermKind.DRIVE,
+                HamiltonianTermOut(
+                    label=f"drive_{rd.drive_id}_{tr_key}",
                     op=Hop,
                     coeff=coeff,
-                    label=f"drive_{rd.drive_id}_{tr}",
                     meta={
                         "type": "drive_component",
                         "drive_id": rd.drive_id,
-                        "transition": str(tr),
+                        "kind": rd.kind,
+                        "transition": tr_key,
                         "component_weight": complex(w),
-                        "all_components": [
-                            (str(t), complex(c)) for (t, c) in comps
-                        ],
-                        "candidates": [str(t) for t in rd.candidates],
-                        **dict(rd.meta),
+                        "candidates": tuple(str(x) for x in rd.candidates),
+                        **dict(rd.meta or {}),
                     },
                 )
             )
 
         return out
 
-    def _coherence_for_transition(
+    def _emit_drive_terms_summed(
         self,
-        tr: Transition,
-        coh_by_pair: Mapping[Tuple[QDState, QDState], np.ndarray],
-    ) -> np.ndarray:
-        bra, ket = _transition_to_bra_ket(tr)
-        A = coh_by_pair.get((bra, ket))
-        if A is None:
-            raise KeyError(
-                f"Missing coherence operator for (bra={bra}, ket={ket}) "
-                f"required by transition {tr}."
-            )
-        return A
-
-    def _build_drive_operator_sum(
-        self,
-        comps: Tuple[Tuple[Transition, complex], ...],
-        coh_by_pair: Mapping[Tuple[QDState, QDState], np.ndarray],
-    ) -> np.ndarray:
-        """
-        A = sum_i c_i * |bra_i><ket_i|
-        """
+        ctx: OpMaterializeContext,
+        dims: Sequence[int],
+        rd: ResolvedDrive,
+        comps: Tuple[Tuple[str, complex], ...],
+        dc: DriveCoefficients,
+        coherence_terms: Mapping[str, Term],
+    ) -> List[HamiltonianTermOut]:
+        # Sum A = sum_i w_i * |upper_i><lower_i|
         A_sum: Optional[np.ndarray] = None
-        for tr, c in comps:
-            A = self._coherence_for_transition(tr, coh_by_pair)
-            term = complex(c) * A
+        for tr_key, w in comps:
+            sym = _coherence_symbol_for_transition(tr_key)
+            if tr_key in coherence_terms:
+                A = _materialize_opexpr(coherence_terms[tr_key].op, ctx, dims)
+            else:
+                A = np.asarray(ctx.resolve_symbol(sym, dims), dtype=complex)
+
+            term = complex(w) * A
             A_sum = term if A_sum is None else (A_sum + term)
+
         assert A_sum is not None
-        return A_sum
+        Hop = (A_sum + A_sum.conj().T) if self.policy.hermitian_drive else A_sum
+
+        # Coefficient in summed mode must be defined carefully.
+        # If you sum operators with weights, the natural choice is to use a single envelope coefficient.
+        # We pick:
+        #   - omega_2ph for 2ph
+        #   - otherwise, the coefficient of the first component transition
+        tr0 = comps[0][0]
+        if rd.kind == "2ph":
+            base = dc.omega_2ph
+            if base is None:
+                raise KeyError(
+                    f"Missing omega_2ph for 2ph drive_id={
+                        rd.drive_id!r}"
+                )
+        else:
+            base = dc.omega_by_transition.get(tr0, None)
+            if base is None:
+                raise KeyError(
+                    f"Missing omega coefficient for transition {
+                        tr0!r} (drive_id={rd.drive_id!r})"
+                )
+
+        coeff = _maybe_scale_omega(base, self.policy)
+
+        return [
+            HamiltonianTermOut(
+                label=f"drive_{rd.drive_id}_sum",
+                op=Hop,
+                coeff=coeff,
+                meta={
+                    "type": "drive_sum",
+                    "drive_id": rd.drive_id,
+                    "kind": rd.kind,
+                    "components": tuple((k, complex(w)) for (k, w) in comps),
+                    "candidates": tuple(str(x) for x in rd.candidates),
+                    **dict(rd.meta or {}),
+                },
+            )
+        ]
 
     # -------------------------------------------------------------------------
-    # DETUNING: per-drive projectors
+    # DETUNING emission
     # -------------------------------------------------------------------------
 
     def _emit_detuning_terms(
         self,
-        *,
+        ctx: OpMaterializeContext,
+        dims: Sequence[int],
         rd: ResolvedDrive,
-        proj_by_level: Mapping[QDState, np.ndarray],
-    ) -> List[HamiltonianTerm]:
-        """
-        Emit DETUNING projector term(s) for this drive.
+        comps: Tuple[Tuple[str, complex], ...],
+        projector_terms: Mapping[str, Term],
+    ) -> List[HamiltonianTermOut]:
+        # Normalize detuning into CoeffExpr (solver units already)
+        det_coeff = _as_coeffexpr_from_detuning(
+            rd.detuning
+        )  # type: ignore[arg-type]
 
-        For split components, we still typically want detuning on the relevant upper levels.
-        We deduplicate projectors (e.g., if multiple components detune the same upper level).
-        """
-        det = self._detuning_coeff(rd)
-        if det is None:
-            return []
+        # Determine which upper-level projectors to include (deduplicate, preserve order)
+        seen: set[str] = set()
+        levels: List[str] = []
+        for tr_key, _w in comps:
+            up = _upper_level_from_transition_key(tr_key)
+            if up not in seen:
+                seen.add(up)
+                levels.append(up)
 
-        comps = self._drive_components(rd)
+        out: List[HamiltonianTermOut] = []
+        for lvl in levels:
+            sym = _projector_symbol_for_level(lvl)
 
-        levels: List[QDState] = []
-        for tr, _w in comps:
-            lv = _transition_to_detuned_level(tr)
-            levels.append(lv)
-
-        # Deduplicate while preserving order
-        seen: set[QDState] = set()
-        levels_unique: List[QDState] = []
-        for lv in levels:
-            if lv not in seen:
-                seen.add(lv)
-                levels_unique.append(lv)
-
-        out: List[HamiltonianTerm] = []
-        for lv in levels_unique:
-            P = proj_by_level.get(lv)
-            if P is None:
-                raise KeyError(
-                    f"Missing projector term for level {
-                        lv} in Hamiltonian catalog."
-                )
+            if lvl in projector_terms:
+                P = _materialize_opexpr(projector_terms[lvl].op, ctx, dims)
+            else:
+                # Fallback to symbol resolution, if you provide it in ctx
+                P = np.asarray(ctx.resolve_symbol(sym, dims), dtype=complex)
 
             out.append(
-                HamiltonianTerm(
-                    kind=HamiltonianTermKind.DETUNING,
+                HamiltonianTermOut(
+                    label=f"detuning_{rd.drive_id}_{lvl}",
                     op=P,
-                    coeff=det,
-                    label=f"detuning_{rd.drive_id}_{lv}",
+                    coeff=det_coeff,
                     meta={
                         "type": "detuning",
                         "drive_id": rd.drive_id,
-                        "level": str(lv),
-                        # For debugging:
-                        "components": [
-                            (str(t), complex(c)) for (t, c) in comps
-                        ],
+                        "level": lvl,
+                        "kind": rd.kind,
+                        "components": tuple(
+                            (k, complex(w)) for (k, w) in comps
+                        ),
+                        **dict(rd.meta or {}),
                     },
                 )
             )
 
-        return out
-
-    # -------------------------------------------------------------------------
-    # Catalog indexing
-    # -------------------------------------------------------------------------
-
-    def _index_projectors(
-        self, detuning_terms: List[HamiltonianTerm]
-    ) -> Dict[QDState, np.ndarray]:
-        """
-        Index DETUNING catalog terms by QD level.
-
-        Expects builder meta:
-            {"type": "projector", "level": <QDState or str>, ...}
-        """
-        out: Dict[QDState, np.ndarray] = {}
-        for t in detuning_terms:
-            meta = dict(t.meta or {})
-            lvl = meta.get("level", None)
-            if lvl is None:
-                continue
-
-            if isinstance(lvl, QDState):
-                out[lvl] = t.op
-                continue
-
-            # If stored as string, attempt normalization
-            try:
-                out[QDState[str(lvl)]] = t.op  # type: ignore[index]
-            except Exception:
-                # If QDState doesn't support string indexing, map manually here.
-                continue
-        return out
-
-    def _index_coherences(
-        self, drive_terms: List[HamiltonianTerm]
-    ) -> Dict[Tuple[QDState, QDState], np.ndarray]:
-        """
-        Index DRIVE catalog terms by (bra, ket) for |bra><ket|.
-
-        Expects builder meta:
-            {"type": "coherence", "bra": <QDState or str>, "ket": <QDState or str>, ...}
-        """
-        out: Dict[Tuple[QDState, QDState], np.ndarray] = {}
-        for t in drive_terms:
-            meta = dict(t.meta or {})
-            bra = meta.get("bra", None)
-            ket = meta.get("ket", None)
-            if bra is None or ket is None:
-                continue
-
-            if not isinstance(bra, QDState) or not isinstance(ket, QDState):
-                try:
-                    bra = QDState[str(bra)]  # type: ignore[index]
-                    ket = QDState[str(ket)]  # type: ignore[index]
-                except Exception:
-                    continue
-
-            out[(bra, ket)] = t.op
         return out

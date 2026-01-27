@@ -1,10 +1,20 @@
 from typing import Callable, Dict, Optional
+from bec.core.model_protocols import CompilableModel
 from bec.quantum_dot.derived import DerivedQD
-from bec.quantum_dot.me.hamiltonian_builder import HamiltonianBuilder
-from bec.quantum_dot.me.observables_builder import ObservablesBuilder
+from bec.quantum_dot.me.hamiltonian_builder import (
+    HamiltonianBuilder,
+    HamiltonianCatalog,
+)
+from bec.quantum_dot.me.observables_builder import (
+    ObservablesBuilder,
+    ObservablesCatalog,
+)
 from bec.quantum_dot.mode_registry import ModeRegistry, SpectralResolution
 from bec.quantum_dot.models.decay_model import DecayModel
 from bec.quantum_dot.models.phonon_model import PhononModel
+from bec.quantum_dot.operators.photonweave.context import (
+    PhotonWeaveMaterializeContext,
+)
 from bec.quantum_dot.parameters.cavity import CavityParams
 from bec.quantum_dot.parameters.dipole import DipoleParams
 from bec.quantum_dot.parameters.energy_structure import EnergyStructure
@@ -18,12 +28,14 @@ from bec.quantum_dot.transitions import (
     DEFAULT_REGISTRY as DEFAULT_TRANSITION_REGISTRY,
 )
 
+# from bec.quantum_dot.operators.symbol_table import PhotonWeaveMaterializeContext
+
 
 def default_pm_map(idx: int) -> str:
     return "+" if idx in (0, 2) else "-"
 
 
-class QuantumDot:
+class QuantumDot(CompilableModel):
     """
         High-level facade for a four-level quantum-dot (QD) model.
 
@@ -49,11 +61,14 @@ class QuantumDot:
         spectral_resolution: Optional[SpectralResolution] = None,
     ):
         self.energy_structure = energy_structure
+
         self.phonon_params = phonon_params or PhononParams()
         self.cavity_params = cavity_params
         self.dipole_params = dipole_params or DipoleParams.from_values(
             mu_default_Cm=1e-29
         )
+
+        self._pw_context: Optional[PhotonWeaveMaterializeContext] = None
         self.exciton_mixing = exciton_mixing or ExcitonMixingParams.from_values(
             delta_prime_eV=0.0
         )
@@ -73,7 +88,7 @@ class QuantumDot:
         self.phonon_model = PhononModel(phonon_params=self.phonon_params)
 
         res = spectral_resolution or SpectralResolution.TWO_COLORS
-        self.mode_registry = ModeRegistry.from_qd(
+        self._mode_registry = ModeRegistry.from_qd(
             energy_structure=self.energy_structure, resolution=res
         )
 
@@ -87,9 +102,29 @@ class QuantumDot:
 
         self.derived = DerivedQD(self)
 
-    def hamiltonian_catalog(self):
+    def hamiltonian_catalog(self) -> HamiltonianCatalog:
         return self.hamiltonian_builder.build_catalog()
 
-    @property
-    def observables_catalog(self):
+    def observables_catalog(self) -> ObservablesCatalog:
         return self.observables_builder.build_catalog()
+
+    # CONTEXTS FOR THE COMPILATION
+
+    @property
+    def materialize_contex(self):
+        """
+        Provides a context which enables the construction
+        of actual operators
+        """
+        if self._pw_context is None:
+            self._pw_context = PhotonWeaveMaterializeContext(
+                modes=self.mode_registry
+            )
+        return self._pw_context
+
+    @property
+    def drive_strength_model(self):
+        return self._drive_strength_model
+
+    @property
+    def drive_decode_context(self) -> Any:

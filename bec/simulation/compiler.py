@@ -6,10 +6,16 @@ import numpy as np
 from rich.console import Console
 
 from bec.simulation.drive_decode import DefaultDriveDecoder
+
+# from bec.simulation.protocols import HamiltonianComposer
 from bec.simulation.reporting.compile_report import (
     CompileReport,
     build_compile_panel,
 )
+
+# from bec.simulation.stages.hamiltonian_composition import (
+#    DefaultHamiltonianComposer,
+# )
 from bec.simulation.types import (
     MEProblem,
     TruncationPolicy,
@@ -27,9 +33,13 @@ class MECompiler:
         self,
         *,
         decoder: Optional[DefaultDriveDecoder] = None,
+        # hamiltonian_composer: Optional[HamiltonianComposer] = None,
         truncation: Optional[TruncationPolicy] = None,
     ):
         self._decoder = decoder or DefaultDriveDecoder()
+        # self._hamiltonian_composer = (
+        #    hamiltonian_composer or DefaultHamiltonianComposer()
+        # )
         self._trunc = truncation or TruncationPolicy(pol_dim=2)
 
     def compile(

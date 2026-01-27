@@ -1,8 +1,8 @@
+# bec/quantum_dot/operators/photonweave/materialize.py
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, Sequence
 import numpy as np
-
 from photon_weave.extra import interpreter
 
 

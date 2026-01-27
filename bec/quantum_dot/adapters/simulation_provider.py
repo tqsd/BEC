@@ -25,3 +25,4 @@ class QDDecodeContextProvider:
 
     def derived_for_report(self, qd: QuantumDot) -> Optional[object]:
         return qd.derived
+

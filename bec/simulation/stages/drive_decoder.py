@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,7 +5,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from bec.simulation.protocols_drive_decode import DriveDecodeContext, TransitionKey
+from bec.simulation.protocols_drive_decode import (
+    DriveDecodeContext,
+    TransitionKey,
+)
 from bec.simulation.types import ResolvedDrive
 
 
@@ -52,7 +54,9 @@ def _laser_omega_samples(
         t_phys = s * float(tlist_solver[i])
         w = drive.omega_L_phys(t_phys)
         if w is None:
-            raise ValueError("Drive carrier is None: cannot decode without omega_L.")
+            raise ValueError(
+                "Drive carrier is None: cannot decode without omega_L."
+            )
         out.append(float(w))
     return np.asarray(out, dtype=float)
 
@@ -104,7 +108,9 @@ def _penalized_score(
     return float(detuning_min) + float(penalty)
 
 
-def _detuning_coeff_1ph(drive: Any, omega_tr_rad_s: float, *, time_unit_s: float):
+def _detuning_coeff_1ph(
+    drive: Any, omega_tr_rad_s: float, *, time_unit_s: float
+):
     s = float(time_unit_s)
 
     def delta(t_solver: float) -> float:
@@ -117,7 +123,9 @@ def _detuning_coeff_1ph(drive: Any, omega_tr_rad_s: float, *, time_unit_s: float
     return delta
 
 
-def _detuning_coeff_2ph(drive: Any, omega_gxx_rad_s: float, *, time_unit_s: float):
+def _detuning_coeff_2ph(
+    drive: Any, omega_gxx_rad_s: float, *, time_unit_s: float
+):
     s = float(time_unit_s)
 
     def delta(t_solver: float) -> float:
@@ -184,6 +192,18 @@ class DefaultDriveDecoder:
             n=self.policy.sample_points,
         )
 
+        wL_min = float(np.min(wL_samples))
+        wL_max = float(np.max(wL_samples))
+        wL_sweep = wL_max - wL_min
+
+        carrier = getattr(drv, "carrier", None)
+        delta = (
+            getattr(carrier, "delta_omega", None)
+            if carrier is not None
+            else None
+        )
+        is_chirped = bool(callable(delta))
+
         # bandwidth (prefer ctx.bandwidth if provided)
         if ctx.bandwidth is not None:
             sigma_omega = float(
@@ -232,7 +252,9 @@ class DefaultDriveDecoder:
             )
 
         if not scores:
-            raise ValueError("No transitions to decode against (empty registry).")
+            raise ValueError(
+                "No transitions to decode against (empty registry)."
+            )
 
         # choose within threshold (on penalized score)
         within = [s for s in scores if float(s["score"]) <= float(thresh)]
@@ -262,7 +284,9 @@ class DefaultDriveDecoder:
             omega_ref = float(entry["omega_ref"])
 
             if kind == "1ph":
-                det = _detuning_coeff_1ph(drv, omega_ref, time_unit_s=time_unit_s)
+                det = _detuning_coeff_1ph(
+                    drv, omega_ref, time_unit_s=time_unit_s
+                )
                 comps = ()
                 if E is not None and ctx.pol is not None:
                     comps = ((tr, complex(ctx.pol.coupling_weight(tr, E))),)
@@ -283,11 +307,17 @@ class DefaultDriveDecoder:
                             "threshold_phys_rad_s": float(thresh),
                             "pol_coupling_mag": float(entry["cmag"]),
                             "omegaL_samples_phys_rad_s": wL_samples.tolist(),
+                            "omegaL_min_phys_rad_s": wL_min,
+                            "omegaL_max_phys_rad_s": wL_max,
+                            "omegaL_sweep_phys_rad_s": wL_sweep,
+                            "is_chirped": is_chirped,
                         },
                     )
                 )
             elif kind == "2ph":
-                det = _detuning_coeff_2ph(drv, omega_ref, time_unit_s=time_unit_s)
+                det = _detuning_coeff_2ph(
+                    drv, omega_ref, time_unit_s=time_unit_s
+                )
                 out.append(
                     ResolvedDrive(
                         drive_id=drive_id,
@@ -303,6 +333,10 @@ class DefaultDriveDecoder:
                             "sigma_omega_phys_rad_s": float(sigma_omega),
                             "threshold_phys_rad_s": float(thresh),
                             "omegaL_samples_phys_rad_s": wL_samples.tolist(),
+                            "omegaL_min_phys_rad_s": wL_min,
+                            "omegaL_max_phys_rad_s": wL_max,
+                            "omegaL_sweep_phys_rad_s": wL_sweep,
+                            "is_chirped": is_chirped,
                         },
                     )
                 )

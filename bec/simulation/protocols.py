@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import (
     Any,
     Dict,
+    Hashable,
     List,
     Optional,
     Protocol,
@@ -14,9 +15,9 @@ from typing import (
 
 import numpy as np
 
-from bec.light.classical import ClassicalCoherentDrive
 from bec.quantum_dot.dot import QuantumDot
-from bec.quantum_dot.me.types import CollapseTerm, HamiltonianTerm, Observables
+from bec.light.classical import ClassicalFieldDrive
+
 from bec.simulation.types import (
     DriveCoefficients,
     MEProblem,
@@ -56,7 +57,7 @@ class Scenario(Protocol):
     """
 
     def prepare(self, qd: QuantumDot) -> None: ...
-    def drives(self) -> Sequence[ClassicalCoherentDrive]: ...
+    def drives(self) -> Sequence[ClassicalFieldDrive]: ...
 
 
 @runtime_checkable
@@ -68,7 +69,7 @@ class DriveDecoder(Protocol):
     def decode(
         self,
         qd: QuantumDot,
-        drives: Sequence[ClassicalCoherentDrive],
+        drives: Sequence[ClassicalFieldDrive],
         *,
         time_unit_s: float,
         tlist: np.ndarray,
@@ -107,7 +108,7 @@ class HamiltonianComposer(Protocol):
         drive_coeffs: Dict[str, DriveCoefficients],
         time_unit_s: float,
         tlist: Optional[np.ndarray] = None,
-    ) -> List[HamiltonianTerm]: ...
+    ) -> List[Any]: ...
 
 
 @runtime_checkable
@@ -141,7 +142,7 @@ class CollapseComposer(Protocol):
         rates: RatesBundle,
         time_unit_s: float,
         tlist: Optional[np.ndarray] = None,
-    ) -> List[CollapseTerm]: ...
+    ) -> List[Any]: ...
 
 
 @runtime_checkable
@@ -150,7 +151,7 @@ class ObservablesComposer(Protocol):
     Produces observables bundle.
     """
 
-    def compose(self, qd: QuantumDot, dims: List[int]) -> Observables: ...
+    def compose(self, qd: QuantumDot, dims: List[int]) -> Any: ...
 
 
 # ----------------------------
