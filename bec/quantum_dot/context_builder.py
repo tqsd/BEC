@@ -1,12 +1,19 @@
 import jax.numpy as jnp
 from typing import Callable, Dict
-from bec.operators.qd_operators import QDState, transition_operator
+from bec.operators.qd_operators import (
+    QDState,
+    basis_ket_4d,
+    exciton_eigenkets_4d,
+    outer_operator,
+    transition_operator,
+)
 from bec.operators.fock_operators import (
     rotated_ladder_operator,
     Ladder,
     Pol,
     vacuum_projector,
 )
+from bec.params.energy_levels import EnergyLevels
 from bec.quantum_dot.protocols import ContextProvider, ModeProvider
 
 
@@ -47,10 +54,17 @@ class QDContextBuilder(ContextProvider):
     >>> ctx = builder.build()
     """
 
-    def __init__(self, mode_provider: ModeProvider, theta: float, phi: float):
+    def __init__(
+        self,
+        mode_provider: ModeProvider,
+        energy_levels: EnergyLevels,
+        theta: float,
+        phi: float,
+    ):
         self._modes = mode_provider
         self._theta = float(theta)
         self._phi = float(phi)
+        self._EL = energy_levels
 
     def build(self) -> Dict[str, Callable]:
         """
@@ -76,6 +90,9 @@ class QDContextBuilder(ContextProvider):
         """
         ctx: Dict[str, Callable] = {
             # QD ops
+            "s_G_G": lambda _: jnp.array(
+                transition_operator(QDState.G, QDState.G)
+            ),
             "s_XX_G": lambda _: jnp.array(
                 transition_operator(QDState.XX, QDState.G)
             ),
@@ -121,7 +138,7 @@ class QDContextBuilder(ContextProvider):
             "s_XX_XX": lambda _: jnp.array(
                 transition_operator(QDState.XX, QDState.XX)
             ),
-            "idq": lambda _: jnp.eye(4),
+            "idq": lambda _: jnp.eye(4, dtype=jnp.complex128),
         }
 
         THETA, PHI = self._theta, self._phi
@@ -153,8 +170,44 @@ class QDContextBuilder(ContextProvider):
                     @ rotated_ladder_operator(
                         d[_s], THETA, PHI, pol=Pol.MINUS, operator=Ladder.A
                     ),
-                    f"if{i}": lambda d, _s=s: jnp.eye(d[_s] * d[_s + 1]),
+                    f"if{i}": lambda d, _s=s: jnp.eye(
+                        d[_s] * d[_s + 1], dtype=jnp.complex128
+                    ),
                     f"vac{i}": lambda d, _s=s: vacuum_projector(d[_s]),
                 }
             )
+
+        Hx = self._EL.exciton_hamiltonian_2x2()
+        ket_low, ket_high = exciton_eigenkets_4d(Hx)
+
+        S_Xm_Xp = outer_operator(ket_low, ket_high)
+        S_Xp_Xm = outer_operator(ket_high, ket_low)
+        P_Xm = outer_operator(ket_low)
+        P_Xp = outer_operator(ket_high)
+
+        ctx.update(
+            {
+                "s_Xm_Xp": lambda _d, A=S_Xm_Xp: jnp.array(A),
+                "s_Xp_Xm": lambda _d, A=S_Xp_Xm: jnp.array(A),
+                "s_Xm_Xm": lambda _d, A=P_Xm: jnp.array(A),
+                "s_Xp_Xp": lambda _d, A=P_Xp: jnp.array(A),
+            }
+        )
+
+        ket_G = basis_ket_4d(QDState.G)
+        ket_XX = basis_ket_4d(QDState.XX)
+
+        S_Xm_G = outer_operator(ket_low, ket_G)
+        S_Xp_G = outer_operator(ket_high, ket_G)
+        S_XX_Xm = outer_operator(ket_XX, ket_low)
+        S_XX_Xp = outer_operator(ket_XX, ket_high)
+
+        ctx.update(
+            {
+                "s_Xm_G": lambda _d, A=S_Xm_G: jnp.array(A),
+                "s_Xp_G": lambda _d, A=S_Xp_G: jnp.array(A),
+                "s_XX_Xm": lambda _d, A=S_XX_Xm: jnp.array(A),
+                "s_XX_Xp": lambda _d, A=S_XX_Xp: jnp.array(A),
+            }
+        )
         return ctx

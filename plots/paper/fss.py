@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from scipy.constants import c as _c, e as _e, hbar as _hbar
 import numpy as np
 from bec.light.classical import ClassicalTwoPhotonDrive
@@ -7,6 +7,7 @@ from bec.operators.qd_operators import QDState
 from bec.params.cavity_params import CavityParams
 from bec.params.dipole_params import DipoleParams
 from bec.params.energy_levels import EnergyLevels
+from bec.params.phonon_params import PhononParams
 from bec.plots.plotter import PlotConfig, QDPlotGrid
 from bec.plots.styles import default_theme
 from bec.quantum_dot.dot import QuantumDot
@@ -45,7 +46,7 @@ def drive(
     return drive
 
 
-def dot() -> QuantumDot:
+def dot(phonons: Optional[PhononParams] = None) -> QuantumDot:
 
     x1 = EXCITON + 0.5 * FSS
     x2 = EXCITON - 0.5 * FSS
@@ -65,7 +66,35 @@ def dot() -> QuantumDot:
         dipole_params=DP,
         time_unit_s=1e-9,
         initial_state=QDState.G,
+        phonon_params=phonons,
     )
+
+
+def phonon_cases():
+    return [
+        ("no phonons", None),
+        # pure dephasing only (your current Lphi_X1/X2/XX)
+        (
+            "dephasing",
+            PhononParams(
+                gamma_phi_X_1_s=1e9,  # example: 1/ns
+                gamma_phi_XX_1_s=1e9,
+                enable_exciton_relaxation=False,
+            ),
+        ),
+        # both
+        (
+            "both",
+            PhononParams(
+                gamma_phi_X_1_s=1e9,
+                gamma_phi_XX_1_s=1e9,
+                enable_exciton_relaxation=True,
+                temperature_K=4.0,
+                alpha=1e-26,
+                omega_c_rad_s=1e12,
+            ),
+        ),
+    ]
 
 
 def _run_once(drive, qd) -> Tuple[QDTraces, dict]:
@@ -168,7 +197,7 @@ def latex_row(label: str, diag: dict) -> str:
     )
 
 
-def run():
+def _run():
     drv_pi = drive(area=np.pi, detuning=0.0)
     drv_2pi = drive(area=5 * np.pi, detuning=0.0, sigma=3 * SIGMA)
     DETUNE = 2e10
@@ -190,6 +219,35 @@ def run():
     tr1.to_csv(f"{FILE_NAME}_5pi_pulse")
     tr1.to_csv(f"{FILE_NAME}_detuned_pi_pulse")
     plot([tr1, tr2, tr3], titles, file=FILE_NAME)
+
+
+def run():
+    drv_pi = drive(area=np.pi, detuning=0.0)
+    drv_2pi = drive(area=5 * np.pi, detuning=0.0, sigma=3 * SIGMA)
+    DETUNE = 2e10
+    drv_pi_detuned = drive(area=1 * np.pi, detuning=DETUNE)
+
+    pulse_set = [
+        ("pi", drv_pi, r"$\pi$-pulse"),
+        ("5pi", drv_2pi, r"$5\pi$-pulse"),
+        ("detuned", drv_pi_detuned, r"detuned $\pi$-pulse"),
+    ]
+
+    cases = phonon_cases()
+
+    for pulse_key, drv, pulse_label in pulse_set:
+        traces = []
+        titles = []
+        for case_name, pp in cases:
+            tr, diag = _run_once(drv, dot(pp))
+            print(pulse_label, "|", case_name, ":", latex_row(case_name, diag))
+
+            traces.append(tr)
+            titles.append(f"{pulse_label} — {case_name}")
+
+            tr.to_csv(f"{FILE_NAME}_{pulse_key}_{case_name.replace(' ', '_')}")
+
+        plot(traces, titles, file=f"{FILE_NAME}_{pulse_key}_phonons.pdf")
 
 
 if __name__ == "__main__":

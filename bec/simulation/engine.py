@@ -1,227 +1,29 @@
-# bec/simulation/engine.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Optional, Tuple
-import numpy as np
-from qutip import Qobj
-from bec.light.detuning import two_photon_detuning_profile
-from bec.params.transitions import TransitionType
-from bec.quantum_dot import QuantumDot
-from bec.simulation.qd_traces import QDTraces
-from bec.simulation.collapse_composer import DefaultCollapseComposer
-from bec.simulation.expectation_layouts import DefaultExpectationLayout
-from bec.simulation.hamiltonian_composers import DefaultHamiltonianComposer
-from bec.simulation.observable_composer import DefaultObservableComposer
-from bec.simulation.solvers import QutipMesolveBackend
-from bec.simulation.space_builder import (
-    DefaultSpaceBuilder,
-)  # only for examples/types
+from typing import Any, Dict, Optional
 
-from .protocols import (
-    Scenario,
-    SpaceBuilder,
-    HamiltonianComposer,
-    CollapseComposer,
-    ObservableComposer,
-    ExpectationLayout,
-    SolverBackend,
-)
+from bec.simulation.protocols import SimulationAdapter
+from bec.simulation.types import MEProblem, MESimulationResult
 
 
 @dataclass
-class SimulationConfig:
-    """
-    Solver configuration
-
-    Parameters
-    ----------
-    tlist: np.ndarray
-        1D array of solver time points (dimensionless solver unit)
-    trunc_per_pol: int, optional
-        Photonicfock truncation per polarization for each mode
-    time_unit_s: float, optional
-        Seconds per solver time unit
-    """
-
-    tlist: np.ndarray
-    trunc_per_pol: int = 2
-    time_unit_s: float = 1.0
-
-
 class SimulationEngine:
-    """
-    High-level facade for the Quantum Dot simulation.
+    adapter: SimulationAdapter
 
-    Responsibilities:
-    -----------------
-    1. Call `scenario.prepare(qd)` to create the modes and classical drive.
-    2. Build Hilbert space and initial state via `SpaceBuilder`
-    3. Compose Hamiltonians, collapse operators, and observables.
-    4. Select expectation operators and index layout.
-    5. Solve the master equation.
-    6. Put the results in `QDTraces` and optionally return final states.
-
-    Notes:
-    ------
-    - If a classical drive is present. its detuning profile is computed
-    and installed as a time-dependent function in physical seconds. The
-    drive coefficient returneb by `qutip_coeff` already includes the scaling.
-    """
-
-    def __init__(
+    def simulate(
         self,
-        space: SpaceBuilder | None = None,
-        hams: HamiltonianComposer | None = None,
-        collapses: CollapseComposer | None = None,
-        observables: ObservableComposer | None = None,
-        layout: ExpectationLayout | None = None,
-        solver: SolverBackend | None = None,
-    ):
-        self.space = space or DefaultSpaceBuilder()
-        self.hams = hams or DefaultHamiltonianComposer()
-        self.collapses = collapses or DefaultCollapseComposer()
-        self.observables = observables or DefaultObservableComposer()
-        self.layout = layout or DefaultExpectationLayout()
-        self.solver = solver or QutipMesolveBackend()
-
-    def run_with_state(
-        self,
-        qd: QuantumDot,
-        scenario: Scenario,
-        cfg: SimulationConfig,
-        reduce_photonic: bool = True,
-    ) -> Tuple[QDTraces, Optional[Qobj], Optional[Qobj]]:
-        """
-        Run the simulation and return traces and final states.
-
-        Parameters:
-        -----------
-        qd: QuantumDot
-            Prepared quantum-dot facade object to simulate
-        scenario: Scenario
-            The scenario to simulate
-        cfg: SimulationConfig
-            Time grid and solver scaling, plus Fock truncation
-        reduce_photonic: bool, optional
-            If True and the solver returns a final `Qobj`, also return
-            the reduced photonic staty by tracing out the QD subsystem
-
-        Returns
-        -------
-        traces: QDTraces
-            Time series for QD and photonic number populations and drive
-            diagnostics
-        rho_final: Qobj or None
-            Final joint state, if provided by the solver backend (qutip does
-            that)
-        rho_phot_final: Qobj or None
-            Reduced final state (QD traced out) when available and
-            `reduce_photonic` is True, otherwise None
-
-        """
-        # 1) install modes / classical drive
-        qd.N_cut = cfg.trunc_per_pol
-        scenario.prepare(qd)
-        drive = scenario.classical_drive()
-
-        # 2) build space + rho0
-        envs, focks, cstate = self.space.build_space(qd, cfg.trunc_per_pol)
-        dims, dims2, rho0 = self.space.build_qutip_space(cstate, qd.dot, focks)
-
-        if drive is not None:
-            drive = drive.with_cached_tlist(cfg.tlist)
-            t_solver, Delta_eff_solver = two_photon_detuning_profile(
-                qd._EL, drive, cfg.time_unit_s
-            )
-            if Delta_eff_solver is not None:
-                t_phys = t_solver * cfg.time_unit_s
-                Delta_eff_phys = Delta_eff_solver / cfg.time_unit_s
-
-                def detuning_fn(t_phys_scalar, t=t_phys, y=Delta_eff_phys):
-                    return float(np.interp(t_phys_scalar, t, y))
-
-                drive = drive.with_detuning(detuning_fn)
-        # 3) Hamiltonians + collapses
-        H = self.hams.compose(qd, dims, drive, time_unit_s=cfg.time_unit_s)
-        C = self.collapses.compose(qd, dims, time_unit_s=cfg.time_unit_s)
-
-        # 4) Observables + expectation layout
-        P_qd = self.observables.compose_qd(
-            qd, dims, time_unit_s=cfg.time_unit_s
+        me: MEProblem,
+        *,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> MESimulationResult:
+        out = self.adapter.simulate(me, options=options)
+        # Engine can inject global meta / validation if you like:
+        meta = dict(out.meta)
+        meta.setdefault("backend", self.adapter.backend_name)
+        return type(out)(
+            tlist=out.tlist,
+            expect=out.expect,
+            states=out.states,
+            final_state=out.final_state,
+            meta=meta,
         )
-        P_lm = self.observables.compose_lm(
-            qd, dims, time_unit_s=cfg.time_unit_s
-        )
-        e_ops, idx = self.layout.select(P_qd, P_lm, qd)
-
-        # 5) Solve
-        result = self.solver.solve(H, rho0, cfg.tlist, C, e_ops)
-
-        # 6) Pack QDTraces (same as in run)
-        qd_tr = result.expect[idx["qd"]]
-        fly_H = result.expect[idx["fly_H"]]
-        fly_V = result.expect[idx["fly_V"]]
-        out_H = result.expect[idx["out_H"]]
-        out_V = result.expect[idx["out_V"]]
-        fly_T = result.expect[idx["fly_T"]]
-
-        Omega_t = area_t = None
-        if drive is not None:
-            # Tell the drive what 1.0 solver time unit equals in seconds
-            coeff = drive.qutip_coeff(time_unit_s=cfg.time_unit_s)
-
-            # Ω_solver(t') already includes the time scaling (so that ∫Ω_solver dt' = ∫Ω_phys dt_phys)
-            Omega_t = np.array([coeff(t, {}) for t in cfg.tlist], dtype=float)
-
-            area_t = np.concatenate(
-                [
-                    [0.0],
-                    np.cumsum(
-                        0.5 * np.diff(cfg.tlist) * (Omega_t[1:] + Omega_t[:-1])
-                    ),
-                ]
-            )
-            area_num = np.trapezoid(Omega_t, cfg.tlist)
-
-        flying_labels = [
-            m.label
-            for m in qd.modes.modes
-            if getattr(m, "source", None) == TransitionType.EXTERNAL
-        ]
-        intrinsic_labels = [
-            m.label
-            for m in qd.modes.modes
-            if getattr(m, "source", None) == TransitionType.INTERNAL
-        ]
-
-        intrinsic_labels_tex = [
-            m.label_tex
-            for m in qd.modes.modes
-            if getattr(m, "source", None) == TransitionType.INTERNAL
-        ]
-
-        traces = QDTraces(
-            t=cfg.tlist,
-            time_unit_s=cfg.time_unit_s,
-            classical=(drive is not None),
-            flying_labels=flying_labels,
-            intrinsic_labels=intrinsic_labels,
-            intrinsic_labels_tex=intrinsic_labels_tex,
-            qd=[qd_tr[i] for i in range(4)],
-            fly_H=list(fly_H),
-            fly_V=list(fly_V),
-            out_H=list(out_H),
-            out_V=list(out_V),
-            omega=Omega_t,
-            area=area_t,
-        )
-
-        # 7) Extract final composite state and (optionally) the photonic reduction
-        rho_final: Optional[Qobj] = getattr(result, "final_state", None)
-        rho_phot_final: Optional[Qobj] = None
-        if rho_final is not None and reduce_photonic:
-            # dims = [QD, mode1+, mode1-, mode2+, mode2-, ...]
-            keep = list(range(1, len(dims)))  # trace out subsystem 0 (QD)
-            rho_phot_final = rho_final.ptrace(keep)
-
-        return traces, rho_final, rho_phot_final

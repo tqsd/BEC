@@ -1,0 +1,153 @@
+from typing import List, Tuple
+from bec.light.light_mode import LightMode
+from bec.params.transitions import Transition, TransitionType
+from bec.quantum_dot.protocols import ModeProvider
+
+
+class ModeRegistry(ModeProvider):
+    """
+    Registry for quantum dot light modes
+
+    This class stores two sets of modes:
+    - intrinsic: modes defined from the enregy level structure
+    - external: modes defined by the user (Not used in the current model)
+
+    It also keeps the exciton rotation parameters (THETA, PHI) that may be
+    needed by other components.
+
+    Parameters
+    ----------
+    intrinsic_modes: list[LightMode]
+        Modes derived from the energy levels of the Quantum Dot
+    rotation_params: (float, float)
+        Exciton mixing angle and relative phase as (THETA, PHI)
+
+    Attributes
+    ----------
+    THETA: float
+        Exciton mixing angle.
+    PHI: float
+        Exciton  relative phase.
+
+    Notes
+    -----
+    - The read-only property `modes` returns the concatenation
+    intrinsic + external
+    - Use `register_external` to add external modes and `reset`
+    to clear them (Methods are implmented, but model does not
+    support the use of external modes)
+
+
+    """
+
+    def __init__(
+        self,
+        intrinsic_modes: List[LightMode],
+        rotation_params: Tuple[float, float],
+    ):
+        self._intrinsic = intrinsic_modes[:]
+        self._external: List[LightMode] = []
+        self.THETA, self.PHI = rotation_params
+
+    @property
+    def intrinsic(self) -> List[LightMode]:
+        """
+        Intrinsic (built-in) modes
+
+        Returns
+        -------
+        list[lightMode]
+           Reference to the list of intrinsic modes.
+        """
+        return self._intrinsic
+
+    @property
+    def external(self) -> List[LightMode]:
+        """
+        Externally registereg modes.
+
+        Returns
+        -------
+        List[LightMode]
+           Reference to the list of external modes.
+        """
+        return self._external
+
+    @property
+    def modes(self) -> List[LightMode]:
+        """
+        All registered modes (intrinsic first, then external).
+
+        Returns
+        -------
+        list[LightMode]
+            Concatenation of intrinsic and external modes.
+        """
+        return [*self._intrinsic, *self._external]
+
+    def by_transition_and_source(
+        self, transition: Transition, source: TransitionType
+    ) -> Tuple[int, LightMode]:
+        """
+        Find the first mode matching a given transition and source.
+
+        Parameters
+        ----------
+        transition : Transition
+            The physical transition label (e.g., Transition.G_X1).
+        source : TransitionType
+            The origin of the mode (e.g., INTERNAL, EXTERNAL).
+
+        Returns
+        -------
+        (int, LightMode)
+            Tuple of (index in `modes`, the matching LightMode).
+
+        Raises
+        ------
+        ValueError
+            If no matching mode is found.
+        """
+        for i, m in enumerate(self.modes):
+            if (
+                m.source == source
+                and getattr(m, "transition", None) == transition
+            ):
+                return i, m
+        # --- fallback for degenerate manifolds (FSS=0) ---
+        deg_map = {
+            Transition.G_X1: Transition.G_X,
+            Transition.G_X2: Transition.G_X,
+            Transition.X1_XX: Transition.X_XX,
+            Transition.X2_XX: Transition.X_XX,
+        }
+        alt = deg_map.get(transition)
+        if alt is not None:
+            for i, m in enumerate(self.modes):
+                if m.source == source and getattr(m, "transition", None) == alt:
+                    return i, m
+
+        raise ValueError(
+            f"No mode with transition {transition} and source {source}"
+        )
+
+    def register_external(self, light_mode: LightMode) -> None:
+        """
+        Add an external (runtime) mode to the registry.
+
+        Parameters
+        ----------
+        light_mode : LightMode
+            The mode to register (e.g., a driving laser or detected output).
+        """
+        self._external.append(light_mode)
+
+    def reset(self) -> None:
+        """
+        Remove all externally registered modes.
+
+        Notes
+        -----
+        Intrinsic modes are preserved; only external modes are cleared.
+        """
+        self._external.clear()

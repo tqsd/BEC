@@ -3,7 +3,7 @@ from typing import Any, Dict, Literal, Mapping
 
 import math
 import numpy as np
-from scipy.constants import e, hbar, c, pi
+from scipy.constants import e, _hbar, c, pi
 from qutip import Qobj
 
 from bec.params.transitions import Transition
@@ -27,7 +27,7 @@ from bec.quantum_dot.metrics import (
 )
 
 
-_E_OVER_HBAR = e / hbar
+_E_OVER_HBAR = e / _hbar
 _TWO_PI = 2.0 * pi
 
 
@@ -372,7 +372,7 @@ class Diagnostics(DiagnosticsProvider):
                 "freq_Hz": 0.0,
                 "lambda_m": float("inf"),
             }
-        omega = (dE_eV * e) / hbar
+        omega = (dE_eV * e) / _hbar
         freq = omega / _TWO_PI
         lam = c / freq if freq > 0.0 else float("inf")
         return {

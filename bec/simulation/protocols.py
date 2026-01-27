@@ -1,94 +1,246 @@
 from __future__ import annotations
-from typing import Protocol, Optional, Sequence, List, Dict, Any, TYPE_CHECKING
+
+from dataclasses import dataclass
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Sequence,
+    Tuple,
+    runtime_checkable,
+)
+
 import numpy as np
-from qutip import Qobj
-from bec.light.classical import ClassicalTwoPhotonDrive
-from photon_weave.state.envelope import Envelope
-from photon_weave.state.fock import Fock
-from photon_weave.state.composite_envelope import CompositeEnvelope
-from bec.quantum_dot import QuantumDot
 
-if TYPE_CHECKING:
-    # QuTiP’s result object; if the import path changes in your version,
-    # switch this to the correct one or just use `Any`.
-    # type: ignore[attr-defined]
-    from qutip.solver import Result as QutipResult
-else:
-    QutipResult = Any  # graceful fallback for runtime
+from bec.light.classical import ClassicalCoherentDrive
+from bec.quantum_dot.dot import QuantumDot
+from bec.quantum_dot.me.types import CollapseTerm, HamiltonianTerm, Observables
+from bec.simulation.types import (
+    DriveCoefficients,
+    MEProblem,
+    RatesBundle,
+    ResolvedDrive,
+    MESimulationResult,
+)
+
+# ----------------------
+# Compile configurations
+# ----------------------
 
 
+@dataclass(frozen=True)
+class CompileConfig:
+    """
+    Configuration used during the compilation
+
+    tlist is in solver units
+    time_unit_s is seconds per solver unit
+    """
+
+    tlist: np.ndarray
+    trunc_per_pol: int = 2
+    time_unit_s: float = 1.0
+
+
+# ------------------
+# Scenario Interface
+# ------------------
+
+
+@runtime_checkable
 class Scenario(Protocol):
     """
-    Provides/installs external modes and (optionally) a classical 2g drive.
+    Scenario prepares the dot (registers modes, etc.) and provides drives.
     """
 
     def prepare(self, qd: QuantumDot) -> None: ...
-    def classical_drive(self) -> Optional[ClassicalTwoPhotonDrive]: ...
-    def label(self) -> str: ...
+    def drives(self) -> Sequence[ClassicalCoherentDrive]: ...
 
 
-class SpaceBuilder(Protocol):
+@runtime_checkable
+class DriveDecoder(Protocol):
     """
-    Build composite space (QD + Fock), bind mode containers, and return rho0.
+    Decodes raw drives into resolved 'intent' objects
     """
 
-    def build_space(
-        self, qd: QuantumDot, trunc_per_pol: int
-    ) -> tuple[list[Envelope], list[Fock], CompositeEnvelope]: ...
-
-    def build_qutip_space(
-        self, cstate: CompositeEnvelope, qd_dot, focks: list[Fock]
-    ) -> tuple[list[int], list[list[int]], Qobj]: ...
-
-
-class HamiltonianComposer(Protocol):
-    """Produce QuTiP H-list from qd + drive + dims + tlist."""
-
-    def compose(
+    def decode(
         self,
         qd: QuantumDot,
-        dims: list[int],
-        drive: Optional[ClassicalTwoPhotonDrive],
+        drives: Sequence[ClassicalCoherentDrive],
+        *,
         time_unit_s: float,
-    ) -> list: ...
+        tlist: np.ndarray,
+    ) -> Tuple[ResolvedDrive, ...]: ...
 
 
+class DriveStrengthModel(Protocol):
+    r"""
+    Builds solver-ready \Omega(t) coefficient expressions for a decoded drive.
+
+    - Does NOT decide which transition is driven (decoder already did).
+    - Produces CoeffExpr callables in solver units (t is solver time).
+    """
+
+    def build(
+        self, *, qd: QuantumDot, rd: ResolvedDrive, time_unit_s: float
+    ) -> DriveCoefficients: ...
+
+    def build_many(
+        self,
+        *,
+        qd: QuantumDot,
+        resolved: tuple[ResolvedDrive, ...],
+        time_unit_s: float,
+    ) -> Dict[str, DriveCoefficients]: ...
+
+
+@runtime_checkable
+class HamiltonianComposer(Protocol):
+    def compose(
+        self,
+        *,
+        qd: QuantumDot,
+        dims: List[int],
+        resolved: Tuple[ResolvedDrive, ...],
+        drive_coeffs: Dict[str, DriveCoefficients],
+        time_unit_s: float,
+        tlist: Optional[np.ndarray] = None,
+    ) -> List[HamiltonianTerm]: ...
+
+
+@runtime_checkable
+class RatesStage(Protocol):
+    """
+    Computes model rates for radiative / phonon channels
+    """
+
+    def compute(
+        self,
+        *,
+        qd: QuantumDot,
+        resolved: Tuple[ResolvedDrive, ...],
+        drive_coeffs: Optional[Dict[str, DriveCoefficients]] = None,
+        time_unit_s: float,
+        tlist: np.ndarray,
+    ) -> RatesBundle: ...
+
+
+@runtime_checkable
 class CollapseComposer(Protocol):
-    """Build collapse operators."""
+    """
+    Produces collapse IR terms from computed rates and resolved drives.
+    """
 
     def compose(
-        self, qd: QuantumDot, dims: list[int], time_unit_s: float
-    ) -> list[Qobj]: ...
-
-
-class ObservableComposer(Protocol):
-    """Build projectors/observables and return (qd_proj, lm_proj) dicts."""
-
-    def compose_qd(
-        self, qd: QuantumDot, dims: list[int], time_unit_s: float
-    ) -> Dict[str, Qobj]: ...
-
-    def compose_lm(
-        self, qd: QuantumDot, dims: list[int], time_unit_s: float
-    ) -> Dict[str, Qobj]: ...
-
-
-class ExpectationLayout(Protocol):
-    """Select e_ops list and define index slices to unpack expectations."""
-
-    def select(
-        self, qd_proj: Dict[str, Qobj], lm_proj: Dict[str, Qobj], qd: QuantumDot
-    ) -> tuple[list[Qobj], Dict[str, slice]]: ...
-
-
-class SolverBackend(Protocol):
-    """Run QuTiP mesolve with standard options."""
-
-    def solve(
         self,
-        H: list,
-        rho0: Qobj,
-        tlist: np.ndarray,
-        c_ops: list[Qobj],
-        e_ops: list[Qobj],
-    ) -> QutipResult: ...
+        *,
+        qd: QuantumDot,
+        dims: List[int],
+        rates: RatesBundle,
+        time_unit_s: float,
+        tlist: Optional[np.ndarray] = None,
+    ) -> List[CollapseTerm]: ...
+
+
+@runtime_checkable
+class ObservablesComposer(Protocol):
+    """
+    Produces observables bundle.
+    """
+
+    def compose(self, qd: QuantumDot, dims: List[int]) -> Observables: ...
+
+
+# ----------------------------
+# Compiler facade protocol
+# ----------------------------
+
+
+@runtime_checkable
+class ProblemCompiler(Protocol):
+    """
+    Facade that compiles QD + scenario + config into MEProblem.
+    """
+
+    def compile(
+        self, qd: QuantumDot, scenario: Scenario, cfg: CompileConfig
+    ) -> MEProblem: ...
+
+
+# ----------------------------
+# Solver backend protocol
+# ----------------------------
+@runtime_checkable
+class SolverBackend(Protocol):
+    """
+    Consumes MEProblem and returns a backend-specific result.
+    """
+
+    def solve(self, problem: MEProblem) -> Any: ...
+
+
+@runtime_checkable
+class SimulationAdapter(Protocol):
+    """
+    Backend Plugin: consumes a backend-agnostic MEProblem and returns
+    a backend-agnostic MESimulationResult.
+    """
+
+    backend_name: str
+
+    def simulate(
+        self,
+        me: MEProblem,
+        *,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> MESimulationResult: ...
+
+
+TransitionKey = Hashable
+
+
+class TransitionRegistryView(Protocol):
+    """QD-free view of available optical transitions."""
+
+    def transitions(self) -> Tuple[TransitionKey, ...]: ...
+
+    def kind(self, tr: TransitionKey) -> str:
+        """Return '1ph' or '2ph' (or other strings if you extend later)."""
+        ...
+
+    def omega_ref_rad_s(self, tr: TransitionKey) -> float:
+        """Physical angular frequency ω_tr in rad/s."""
+        ...
+
+
+class PolarizationCouplingView(Protocol):
+    """
+    Maps drive polarization into coupling weights for transitions.
+    Must be QD-aware internally, but interface is QD-free.
+    """
+
+    def coupling_weight(self, tr: TransitionKey, E: np.ndarray) -> complex:
+        """
+        Return complex overlap c = d* · E_eff for that transition.
+        If unknown/unconstrained, return 1+0j.
+        """
+        ...
+
+
+class BandwidthEstimator(Protocol):
+    def sigma_omega_rad_s(
+        self,
+        *,
+        drive: Any,
+        tlist_solver: np.ndarray,
+        time_unit_s: float,
+    ) -> float: ...
+
+
+@dataclass(frozen=True)
+class DriveDecodeContext:
+    transitions: TransitionRegistryView
+    pol: Optional[PolarizationCouplingView] = None
+    bandwidth: Optional[BandwidthEstimator] = None
