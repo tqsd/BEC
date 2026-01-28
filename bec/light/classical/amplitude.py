@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from bec.units import QuantityLike, as_quantity, magnitude
+from smef.core.units import QuantityLike, as_quantity, magnitude
 
 
 @dataclass(frozen=True)
@@ -18,8 +18,7 @@ class FieldAmplitude:
     E0: QuantityLike
     label: Optional[str] = None
 
-    # cached float in V/m
-    _E0_V_m: float = 0.0  # set in __post_init__
+    _E0_V_m: float = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         E0q = as_quantity(self.E0, "V/m")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Union
 
-from bec.units import QuantityLike, as_quantity, magnitude
+from smef.core.units import QuantityLike, Q, as_quantity, magnitude
 
 
 TimeLike = Union[QuantityLike, float, int]
@@ -15,13 +15,13 @@ OmegaFn = Callable[[QuantityLike], QuantityLike]
 
 def _time_s(t: TimeLike) -> float:
     if hasattr(t, "to"):
-        return magnitude(t, "s")
+        return float(magnitude(t, "s"))
     return float(t)
 
 
 def _omega_rad_s(w: OmegaLike) -> float:
     if hasattr(w, "to"):
-        return magnitude(w, "rad/s")
+        return float(magnitude(w, "rad/s"))
     return float(w)
 
 
@@ -40,7 +40,6 @@ class Carrier:
     phi0: float = 0.0
     label: Optional[str] = None
 
-    # cached float omega0 in rad/s for efficiency
     _omega0_rad_s: float = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -61,9 +60,6 @@ class Carrier:
         t_s = _time_s(t_phys)
         d = self.delta_omega
         if callable(d):
-            # pass QuantityLike seconds into profile
-            from bec.units import Q
-
             dw = d(Q(t_s, "s"))
             return as_quantity(dw, "rad/s") + self.omega0
         return self.omega0 + as_quantity(d, "rad/s")
@@ -71,12 +67,14 @@ class Carrier:
     def omega_rad_s(self, t_phys: TimeLike) -> float:
         """
         Fast path: return instantaneous omega at physical time t_phys as float rad/s.
+
         If delta_omega is callable, this still calls it (unitful input), so for hot loops
         you should compile first.
         """
-        if callable(self.delta_omega):
+        d = self.delta_omega
+        if callable(d):
             return float(magnitude(self.omega_phys(t_phys), "rad/s"))
-        return self._omega0_rad_s + float(magnitude(self.delta_omega, "rad/s"))
+        return self._omega0_rad_s + float(magnitude(d, "rad/s"))
 
     def to_dict(self) -> Dict[str, Any]:
         """

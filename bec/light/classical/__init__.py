@@ -1,14 +1,15 @@
 from .amplitude import FieldAmplitude
 from .carrier import Carrier
-from .drive import ClassicalFieldDrive
-from .compile import CompiledDrive, compile_drive
+from .carrier_profiles import constant, linear_chirp, tanh_chirp
+from .field_drive import ClassicalFieldDriveU
 from .factories import gaussian_field_drive
 
 __all__ = [
     "FieldAmplitude",
     "Carrier",
-    "ClassicalFieldDrive",
-    "CompiledDrive",
-    "compile_drive",
+    "constant",
+    "linear_chirp",
+    "tanh_chirp",
+    "ClassicalFieldDriveU",
     "gaussian_field_drive",
 ]

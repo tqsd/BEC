@@ -1,21 +1,22 @@
 from __future__ import annotations
 
-from typing import Optional, Any
+from typing import Any, Optional
 
-from bec.units import (
+from smef.core.units import (
+    Q,
     QuantityLike,
     as_quantity,
     energy_to_rad_s,
+    magnitude,
     wavelength_to_energy,
-    Q,
 )
 
-from bec.light.envelopes.gaussian import GaussianEnvelope
 from bec.light.core.polarization import JonesMatrix, JonesState
+from bec.light.envelopes.gaussian import GaussianEnvelopeU
 
 from .amplitude import FieldAmplitude
 from .carrier import Carrier
-from .drive import ClassicalFieldDrive
+from .field_drive import ClassicalFieldDriveU
 
 
 def gaussian_field_drive(
@@ -26,29 +27,31 @@ def gaussian_field_drive(
     E0: Any,
     # carrier specification (choose one style)
     omega0: Optional[Any] = None,  # rad/s
-    wavelength: Optional[Any] = None,  # nm, um, ...
+    wavelength: Optional[Any] = None,  # nm, um, m, ...
     energy: Optional[Any] = None,  # eV
     delta_omega: Any = Q(0.0, "rad/s"),
     phi0: float = 0.0,
     pol_state: Optional[JonesState] = None,
     pol_transform: Optional[JonesMatrix] = None,
+    preferred_kind: Optional[str] = None,  # "1ph" or "2ph"
     label: Optional[str] = None,
-) -> ClassicalFieldDrive:
+) -> ClassicalFieldDriveU:
     """
-    Build a ClassicalFieldDrive with a normalized Gaussian envelope and unitful field amplitude.
+    Build a ClassicalFieldDriveU with a peak-normalized Gaussian envelope and unitful field amplitude.
 
     Envelope:
-      - GaussianEnvelope is normalized so integral f(t) dt = 1.
-      - You choose t0 and either sigma or fwhm (time-like).
+      - GaussianEnvelopeU is peak-normalized: max g(t) = 1.
+      - Provide t0 and exactly one of sigma or fwhm (time-like).
 
     Amplitude:
-      - E0 is the field scale in V/m. The physical envelope is E(t) = E0 * f(t).
+      - E0 is the peak field scale in V/m.
+      - Physical envelope magnitude is E_env(t) = E0 * g(t).
 
     Carrier:
       - optional. If omega0 is provided, uses that.
-      - else if wavelength is provided, converts to energy then omega0.
-      - else if energy is provided, converts to omega0.
-      - delta_omega is added (can be QuantityLike in rad/s).
+      - else if wavelength is provided, converts to energy (eV) then omega0 (rad/s).
+      - else if energy is provided, converts to omega0 (rad/s).
+      - delta_omega is added (rad/s).
     """
     t0q = as_quantity(t0, "s")
 
@@ -56,9 +59,9 @@ def gaussian_field_drive(
         raise ValueError("Provide exactly one of sigma or fwhm")
 
     if sigma is not None:
-        env = GaussianEnvelope(t0=t0q, sigma=as_quantity(sigma, "s"))
+        env = GaussianEnvelopeU(t0=t0q, sigma=as_quantity(sigma, "s"))
     else:
-        env = GaussianEnvelope.from_fwhm(t0=t0q, fwhm=as_quantity(fwhm, "s"))
+        env = GaussianEnvelopeU.from_fwhm(t0=t0q, fwhm=as_quantity(fwhm, "s"))
 
     amp = FieldAmplitude(E0=as_quantity(E0, "V/m"))
 
@@ -67,7 +70,7 @@ def gaussian_field_drive(
         if omega0 is not None:
             w0 = as_quantity(omega0, "rad/s")
         elif wavelength is not None:
-            # convert wavelength -> energy (eV) -> omega (rad/s)
+            # wavelength -> energy (eV) -> omega (rad/s)
             E = wavelength_to_energy(wavelength, out_unit="eV")
             w0 = energy_to_rad_s(E, out_unit="rad/s")
         else:
@@ -79,11 +82,12 @@ def gaussian_field_drive(
             phi0=float(phi0),
         )
 
-    return ClassicalFieldDrive(
+    return ClassicalFieldDriveU(
         envelope=env,
         amplitude=amp,
         carrier=car,
         pol_state=pol_state,
         pol_transform=pol_transform,
+        preferred_kind=preferred_kind,
         label=label,
     )

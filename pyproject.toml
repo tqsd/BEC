@@ -15,11 +15,21 @@ dependencies = [
   "numpy>=2.0",
   "scipy>=1.12",
   "qutip>=5.2",
-  "photon_weave>=0.1.8",
   "tqdm>=4.66",
   "matplotlib>=3.8",
   "pytest>=8.0",
   "qsi @ git+https://github.com/tqsd/special_issue_quantum.git@5931b967e2fa4dbc28201c9480c02554e4a9f81b",
+  "standardized-master-equation-framework @ git+https://github.com/tqsd/Standardized-Master-Equation-Framework.git@v0.0.1",
+  "rich==14.3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "import-linter>=2.0",
+  "black",
+  "flake8",
+  "isort",
 ]
 
 [tool.black]

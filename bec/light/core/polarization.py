@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Literal, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
 
-PolBasis = Literal["HV"]
+HV_BASIS = "HV"
 
 
 def _c_to_json(z: complex) -> list[float]:
@@ -23,17 +23,34 @@ def _c_from_json(x: Any) -> complex:
     raise TypeError(f"Cannot decode complex from {type(x)}: {x!r}")
 
 
+def _require_hv(basis: Any) -> None:
+    if basis is None:
+        return
+    if str(basis) != HV_BASIS:
+        raise ValueError(
+            f"Only basis={HV_BASIS!r} is supported (got {basis!r})"
+        )
+
+
 @dataclass(frozen=True)
 class JonesState:
     """
-    Jones polarization state in a 2D basis (default HV).
+    Jones polarization state in the fixed HV basis.
 
-    Stored as two complex amplitudes (Ex, Ey) in the given basis.
+    Stored as two complex amplitudes (E_H, E_V).
     """
 
     jones: Tuple[complex, complex] = (1.0 + 0j, 0.0 + 0j)
-    basis: PolBasis = "HV"
     normalize: bool = True
+    basis: str = HV_BASIS  # fixed, validated
+
+    def __post_init__(self) -> None:
+        _require_hv(self.basis)
+
+        j0 = complex(self.jones[0])
+        j1 = complex(self.jones[1])
+        object.__setattr__(self, "jones", (j0, j1))
+        object.__setattr__(self, "basis", HV_BASIS)
 
     def as_array(self) -> np.ndarray:
         v = np.array(self.jones, dtype=np.complex128)
@@ -46,18 +63,19 @@ class JonesState:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": "jones_state",
-            "basis": self.basis,
+            "basis": HV_BASIS,
             "normalize": bool(self.normalize),
             "jones": [_c_to_json(self.jones[0]), _c_to_json(self.jones[1])],
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "JonesState":
+        _require_hv(data.get("basis", HV_BASIS))
         j = data["jones"]
         return cls(
             jones=(_c_from_json(j[0]), _c_from_json(j[1])),
-            basis=data.get("basis", "HV"),
             normalize=bool(data.get("normalize", True)),
+            basis=HV_BASIS,
         )
 
     @classmethod
@@ -90,20 +108,24 @@ class JonesState:
 @dataclass(frozen=True)
 class JonesMatrix:
     """
-    2x2 complex Jones matrix in a basis (default HV).
+    2x2 complex Jones matrix in the fixed HV basis.
     """
 
     J: np.ndarray
-    basis: PolBasis = "HV"
+    basis: str = HV_BASIS
 
     def __post_init__(self) -> None:
+        _require_hv(self.basis)
+
         A = np.asarray(self.J, dtype=np.complex128)
         if A.shape != (2, 2):
             raise ValueError("JonesMatrix must be 2x2 complex")
         object.__setattr__(self, "J", A)
+        object.__setattr__(self, "basis", HV_BASIS)
 
     def apply(self, state: JonesState) -> np.ndarray:
-        if state.basis != self.basis:
+        # state.basis is always HV, but keep the check as a guardrail.
+        if state.basis != HV_BASIS:
             raise ValueError("Jones basis mismatch")
         return self.J @ state.as_array()
 
@@ -111,7 +133,7 @@ class JonesMatrix:
         J = self.J
         return {
             "type": "jones_matrix",
-            "basis": self.basis,
+            "basis": HV_BASIS,
             "J": [
                 [_c_to_json(J[0, 0]), _c_to_json(J[0, 1])],
                 [_c_to_json(J[1, 0]), _c_to_json(J[1, 1])],
@@ -120,6 +142,7 @@ class JonesMatrix:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "JonesMatrix":
+        _require_hv(data.get("basis", HV_BASIS))
         Jraw = data["J"]
         J = np.array(
             [
@@ -128,27 +151,25 @@ class JonesMatrix:
             ],
             dtype=np.complex128,
         )
-        return cls(J=J, basis=data.get("basis", "HV"))
+        return cls(J=J, basis=HV_BASIS)
 
     @classmethod
-    def identity(cls, *, basis: PolBasis = "HV") -> "JonesMatrix":
-        return cls(J=np.eye(2, dtype=np.complex128), basis=basis)
+    def identity(cls) -> "JonesMatrix":
+        return cls(J=np.eye(2, dtype=np.complex128))
 
     @classmethod
-    def rotation(
-        cls, theta_rad: float, *, basis: PolBasis = "HV"
-    ) -> "JonesMatrix":
+    def rotation(cls, theta_rad: float) -> "JonesMatrix":
         c = float(np.cos(theta_rad))
         s = float(np.sin(theta_rad))
         J = np.array([[c, -s], [s, c]], dtype=np.complex128)
-        return cls(J=J, basis=basis)
+        return cls(J=J)
 
     @classmethod
     def retarder(
-        cls, delta_rad: float, theta_rad: float = 0.0, *, basis: PolBasis = "HV"
+        cls, delta_rad: float, theta_rad: float = 0.0
     ) -> "JonesMatrix":
-        Rm = cls.rotation(-theta_rad, basis=basis).J
-        Rp = cls.rotation(theta_rad, basis=basis).J
+        Rm = cls.rotation(-theta_rad).J
+        Rp = cls.rotation(theta_rad).J
         D = np.array(
             [
                 [np.exp(-1j * delta_rad / 2.0), 0.0],
@@ -156,28 +177,22 @@ class JonesMatrix:
             ],
             dtype=np.complex128,
         )
-        return cls(J=Rm @ D @ Rp, basis=basis)
+        return cls(J=Rm @ D @ Rp)
 
     @classmethod
-    def hwp(
-        cls, theta_rad: float = 0.0, *, basis: PolBasis = "HV"
-    ) -> "JonesMatrix":
-        return cls.retarder(np.pi, theta_rad, basis=basis)
+    def hwp(cls, theta_rad: float = 0.0) -> "JonesMatrix":
+        return cls.retarder(np.pi, theta_rad)
 
     @classmethod
-    def qwp(
-        cls, theta_rad: float = 0.0, *, basis: PolBasis = "HV"
-    ) -> "JonesMatrix":
-        return cls.retarder(np.pi / 2.0, theta_rad, basis=basis)
+    def qwp(cls, theta_rad: float = 0.0) -> "JonesMatrix":
+        return cls.retarder(np.pi / 2.0, theta_rad)
 
     @classmethod
-    def linear_polarizer(
-        cls, theta_rad: float = 0.0, *, basis: PolBasis = "HV"
-    ) -> "JonesMatrix":
-        Rm = cls.rotation(-theta_rad, basis=basis).J
-        Rp = cls.rotation(theta_rad, basis=basis).J
+    def linear_polarizer(cls, theta_rad: float = 0.0) -> "JonesMatrix":
+        Rm = cls.rotation(-theta_rad).J
+        Rp = cls.rotation(theta_rad).J
         P = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.complex128)
-        return cls(J=Rm @ P @ Rp, basis=basis)
+        return cls(J=Rm @ P @ Rp)
 
 
 def effective_polarization(
@@ -187,6 +202,7 @@ def effective_polarization(
 ) -> Optional[np.ndarray]:
     """
     Return the effective polarization vector after applying an optional transform.
+
     Result is a length-2 complex numpy array, normalized if pol_state.normalize is True.
     """
     if pol_state is None:
@@ -194,6 +210,4 @@ def effective_polarization(
     E = pol_state.as_array()
     if pol_transform is None:
         return E
-    if pol_transform.basis != pol_state.basis:
-        raise ValueError("Polarization basis mismatch")
     return pol_transform.J @ E

@@ -4,18 +4,30 @@ from dataclasses import dataclass, field
 from typing import Any, Dict
 import math
 
-from bec.units import QuantityLike, as_quantity, magnitude
+from smef.core.units import QuantityLike, Q, as_quantity, magnitude
 
-from .base import SerializableEnvelope, TimeLike, _time_s
+from .base import SerializableEnvelopeU
+
+
+def _as_time_quantity(x: Any, unit: str = "s") -> QuantityLike:
+    """
+    Coerce x into a time quantity in the SMEF unit registry.
+    - bare numbers: interpreted as `unit`
+    - quantities: converted to `unit` (raises if incompatible)
+    """
+    return as_quantity(x, unit)
+
+
+def _mag(x: Any, unit: str) -> float:
+    return float(magnitude(x, unit))
 
 
 @dataclass(frozen=True)
-class GaussianEnvelope(SerializableEnvelope):
+class GaussianEnvelopeU(SerializableEnvelopeU):
     """
-    Peak-normalized Gaussian envelope.
+    Peak-normalized Gaussian envelope (unitful time).
 
     g(t) = exp(-(t - t0)^2 / (2*sigma^2))
-
     max g(t) = 1
     """
 
@@ -26,16 +38,16 @@ class GaussianEnvelope(SerializableEnvelope):
     _sig_s: float = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        t0q = as_quantity(self.t0, "s")
-        sigq = as_quantity(self.sigma, "s")
+        t0_q = _as_time_quantity(self.t0, "s")
+        sig_q = _as_time_quantity(self.sigma, "s")
 
-        t0_s = float(t0q.magnitude)
-        sig_s = float(sigq.magnitude)
+        t0_s = float(t0_q.magnitude)
+        sig_s = float(sig_q.magnitude)
         if sig_s <= 0.0:
             raise ValueError("sigma must be > 0")
 
-        object.__setattr__(self, "t0", t0q)
-        object.__setattr__(self, "sigma", sigq)
+        object.__setattr__(self, "t0", t0_q)
+        object.__setattr__(self, "sigma", sig_q)
         object.__setattr__(self, "_t0_s", t0_s)
         object.__setattr__(self, "_sig_s", sig_s)
 
@@ -43,34 +55,45 @@ class GaussianEnvelope(SerializableEnvelope):
         x = (t_s - self._t0_s) / self._sig_s
         return float(math.exp(-0.5 * x * x))
 
-    def __call__(self, t: TimeLike) -> float:
-        return self._eval_seconds(_time_s(t))
+    def __call__(self, t: QuantityLike) -> float:
+        # Strictly unitful per your EnvelopeU contract
+        if not hasattr(t, "to"):
+            raise TypeError("EnvelopeU requires unitful time (QuantityLike).")
+        return self._eval_seconds(_mag(t, "s"))
 
     def area_seconds(self) -> float:
-        """Return integral of g(t) dt in seconds."""
+        """Integral of g(t) dt in seconds."""
         return self._sig_s * math.sqrt(2.0 * math.pi)
 
     @classmethod
-    def from_fwhm(cls, t0: Any, fwhm: Any) -> "GaussianEnvelope":
-        t0_q = as_quantity(t0, "s")
-        fwhm_q = as_quantity(fwhm, "s")
-        fwhm_s = magnitude(fwhm_q, "s")
+    def from_fwhm(cls, t0: Any, fwhm: Any) -> "GaussianEnvelopeU":
+        t0_q = _as_time_quantity(t0, "s")
+        fwhm_q = _as_time_quantity(fwhm, "s")
+        fwhm_s = float(fwhm_q.magnitude)
         if fwhm_s <= 0.0:
             raise ValueError("fwhm must be > 0")
+
         sigma_s = fwhm_s / (2.0 * math.sqrt(2.0 * math.log(2.0)))
-        return cls(t0=t0_q, sigma=as_quantity(sigma_s, "s"))
+        return cls(t0=t0_q, sigma=Q(sigma_s, "s"))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": "gaussian",
-            "t0": {"value": float(magnitude(self.t0, "s")), "unit": "s"},
-            "sigma": {"value": float(magnitude(self.sigma, "s")), "unit": "s"},
+            "t0": {"value": _mag(self.t0, "s"), "unit": "s"},
+            "sigma": {"value": _mag(self.sigma, "s"), "unit": "s"},
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "GaussianEnvelope":
+    def from_dict(cls, data: Dict[str, Any]) -> "GaussianEnvelopeU":
         t0_d = data["t0"]
         sig_d = data["sigma"]
-        t0 = as_quantity(float(t0_d["value"]), str(t0_d.get("unit", "s")))
-        sigma = as_quantity(float(sig_d["value"]), str(sig_d.get("unit", "s")))
-        return cls(t0=t0, sigma=sigma)
+
+        t0_v = float(t0_d["value"])
+        t0_u = str(t0_d.get("unit", "s"))
+
+        sig_v = float(sig_d["value"])
+        sig_u = str(sig_d.get("unit", "s"))
+
+        t0_q = Q(t0_v, t0_u).to("s")
+        sig_q = Q(sig_v, sig_u).to("s")
+        return cls(t0=t0_q, sigma=sig_q)
