@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -204,7 +204,6 @@ class QDDriveDecoder(DriveDecoderProto):
             sigma_omega = _estimate_sigma_omega_fallback(
                 tlist_solver, time_unit_s
             )
-
         # score all candidates
         scored: List[Tuple[float, TransitionPair, str, float, float, float]] = (
             []
