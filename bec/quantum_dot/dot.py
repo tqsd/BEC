@@ -84,7 +84,7 @@ class QuantumDot(CompilableModelProto):
         return CompileBundle(
             modes=modes,
             hamiltonian=QDHamiltonianCatalog.from_qd(self, units=units),
-            collapse=QDCollapseCatalog.from_qd(self, units=units),
+            collapse=QDCollapseCatalog.from_qd(self, modes=modes, units=units),
             observables=QDObservablesCatalog(modes=modes),
             drive_decode=decode_ctx,
             drive_decoder=QDDriveDecoder(),

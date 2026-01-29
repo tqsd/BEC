@@ -10,10 +10,10 @@ class QDSymbol(str, Enum):
     PROJ_X2 = "proj_X2"
     PROJ_XX = "proj_XX"
 
-    T_X1_XX = "X1_XX"
-    T_X2_XX = "X2_XX"
-    T_G_X1 = "G_X1"
-    T_G_X2 = "G_X2"
+    T_X1_XX = "t_X1_XX"
+    T_X2_XX = "t_X2_XX"
+    T_G_X1 = "t_G_X1"
+    T_G_X2 = "t_G_X2"
 
     T_XX_G = "t_XX_G"
     T_G_XX = "t_G_XX"

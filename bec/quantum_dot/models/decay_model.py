@@ -21,17 +21,6 @@ from bec.quantum_dot.transitions import (
     TransitionRegistry,
 )
 
-# from bec.quantum_dot.units import as_eV
-# from bec.units import (
-#    Q,
-#    QuantityLike,
-#    as_quantity,
-#    magnitude,
-#    hbar as _hbar,
-#    epsilon_0 as _eps_0,
-#    c as _c,
-# )
-
 
 @dataclass(frozen=True)
 class DecayModel:

@@ -16,18 +16,25 @@ from bec.quantum_dot.enums import TransitionPair
 from bec.quantum_dot.smef.drives.context import QDDriveDecodeContext
 
 
-def _payload_from_ctx(
-    drive_id: Any,
+def _payload_from_anywhere(
+    rd: ResolvedDrive,
     *,
-    meta_drives: Mapping[Any, Any],
+    ctx: QDDriveDecodeContext,
 ) -> Any:
-    try:
-        return meta_drives[drive_id]
-    except KeyError as e:
-        raise KeyError(
-            f"Missing drive payload for drive_id={drive_id}. "
-            "Expected decode_ctx.meta_drives[drive_id] to exist."
-        ) from e
+    # Preferred: context mapping
+    if hasattr(ctx, "meta_drives") and rd.drive_id in ctx.meta_drives:
+        return ctx.meta_drives[rd.drive_id]
+
+    # Backwards-compatible fallback: old code used rd.meta["payload"]
+    payload = rd.meta.get("payload")
+    if payload is not None:
+        return payload
+
+    raise KeyError(
+        f"Missing drive payload for drive_id={rd.drive_id}. "
+        "Provide decode_ctx.meta_drives[drive_id] = payload (recommended), "
+        "or set ResolvedDrive.meta['payload'] (legacy fallback)."
+    )
 
 
 def _effective_pol(payload: Any) -> Optional[np.ndarray]:
@@ -45,7 +52,6 @@ def _sample_E_env_V_m(payload: Any, t_phys_s: np.ndarray) -> np.ndarray:
     if not callable(fn):
         raise AttributeError("Drive payload must provide E_env_V_m(t_phys_s)")
 
-    # Vectorization friendly, but keep it simple and explicit
     out = np.empty(t_phys_s.size, dtype=float)
     for i in range(t_phys_s.size):
         out[i] = float(fn(float(t_phys_s[i])))
@@ -57,10 +63,8 @@ class QDDriveStrengthModel(DriveStrengthModelProto):
     """
     ResolvedDrive -> coefficient arrays on solver tlist.
 
-    Computes Omega(t) from mu * E(t) / hbar, multiplied by polarization overlap.
-
-    Returned coefficient is in solver units (unitless):
-        Omega_solver(t) = Omega_rad_s(t) * time_unit_s
+    Omega(t) = (mu * E(t) / hbar) * pol_overlap
+    Returned in solver units: Omega_solver = Omega_rad_s * time_unit_s
     """
 
     def compute(
@@ -72,22 +76,18 @@ class QDDriveStrengthModel(DriveStrengthModelProto):
         decode_ctx: Optional[DriveDecodeContextProto] = None,
     ) -> DriveCoefficients:
         if not isinstance(decode_ctx, QDDriveDecodeContext):
-            raise TypeError("QDDriveStrengthModel expects QDDriveDecodeContext")
+            raise TypeError(
+                "QDDriveStrengthModel expects QDDriveDecodeContext")
 
         derived = decode_ctx.derived
-
-        # IMPORTANT: payload lookup comes from context, not from ResolvedDrive.meta
-        meta_drives = getattr(decode_ctx, "meta_drives", None)
-        if meta_drives is None:
-            raise AttributeError(
-                "QDDriveDecodeContext must provide meta_drives mapping: drive_id -> payload"
-            )
 
         tlist = np.asarray(tlist, dtype=float)
         s = float(time_unit_s)
         t_phys_s = s * tlist
 
         coeffs: dict[tuple[Any, Any], np.ndarray] = {}
+
+        hbar_Js = float(magnitude(hbar, "J*s"))
 
         for rd in resolved:
             pair = rd.transition_key
@@ -96,28 +96,37 @@ class QDDriveStrengthModel(DriveStrengthModelProto):
                     f"Expected TransitionPair transition_key, got {type(pair)}"
                 )
 
-            payload = _payload_from_ctx(rd.drive_id, meta_drives=meta_drives)
+            payload = _payload_from_anywhere(rd, ctx=decode_ctx)
 
-            # E(t) in V/m (float array)
             E_t = _sample_E_env_V_m(payload, t_phys_s)
 
-            # choose absorption direction (low->high): forward transition in registry
+            # absorption direction: forward transition in registry
             fwd, _ = derived.t_registry.directed(pair)
 
-            # mu in C*m (unitful)
             mu_q = derived.mu(fwd)
             mu_Cm = float(magnitude(mu_q, "C*m"))
 
-            # polarization overlap (dimensionless complex scalar)
             pol_vec = _effective_pol(payload)
             pol = 1.0 + 0.0j
             if pol_vec is not None:
                 pol = complex(derived.drive_projection(fwd, pol_vec))
 
-            # Omega(t) = mu * E / hbar (rad/s), then convert to solver units by * time_unit_s
-            hbar_Js = float(magnitude(hbar, "J*s"))
             omega_rad_s = (mu_Cm * E_t) / hbar_Js
             omega_solver = (omega_rad_s * s).astype(complex) * pol
+
+            # ---- phonon polaron renormalization (multiplicative) ----
+            # Uses directed transition (absorption direction) to pick s^2 = (phi_i - phi_j)^2.
+            # If phonons disabled / non-polaron, derived.polaron_B should return 1.0.
+            B = 1.0
+            if getattr(derived, "phonon_outputs", None) is not None:
+                # if you implement DerivedQD.polaron_B(fwd)
+                if hasattr(derived, "polaron_B"):
+                    B = float(derived.polaron_B(fwd))
+                else:
+                    # fallback: access outputs dict directly
+                    out = derived.phonon_outputs
+                    B = float(out.B_polaron_per_transition.get(fwd, 1.0))
+            omega_solver *= B + 0.0j
 
             coeffs[(rd.drive_id, pair)] = omega_solver
 

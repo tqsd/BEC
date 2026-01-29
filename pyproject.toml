@@ -19,7 +19,7 @@ dependencies = [
   "matplotlib>=3.8",
   "pytest>=8.0",
   "qsi @ git+https://github.com/tqsd/special_issue_quantum.git@5931b967e2fa4dbc28201c9480c02554e4a9f81b",
-  "standardized-master-equation-framework @ git+https://github.com/tqsd/Standardized-Master-Equation-Framework.git@v0.0.1",
+  "standardized-master-equation-framework @ git+https://github.com/tqsd/Standardized-Master-Equation-Framework.git@v0.0.2",
   "rich==14.3.1",
 ]
 

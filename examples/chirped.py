@@ -1,23 +1,22 @@
 from __future__ import annotations
 
 import numpy as np
+import matplotlib.pyplot as plt
 
 from smef.core.drives.types import DriveSpec
-from smef.engine import SimulationEngine
-from smef.core.units import Q, UnitSystem
+from smef.engine import SimulationEngine, UnitSystem
+from smef.core.units import Q
 
 from bec.light.classical.factories import gaussian_field_drive
 from bec.light.classical.field_drive import ClassicalFieldDriveU
+from bec.light.classical.carrier import Carrier
+from bec.light.classical import carrier_profiles
+
 from bec.quantum_dot.dot import QuantumDot
-from bec.quantum_dot.enums import QDState
-from bec.quantum_dot.smef.drives.context import QDDriveDecodeContext
+from bec.quantum_dot.enums import QDState, TransitionPair
 from bec.quantum_dot.smef.initial_state import rho0_qd_vacuum
 from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.dipole_params import DipoleParams
-
-# from bec.quantum_dot.smef.drives.pipeline import QDDriveDecodeContext
-
-import matplotlib.pyplot as plt
 
 
 def plot_qd_run_summary(
@@ -126,141 +125,105 @@ def plot_qd_run_summary(
     plt.show()
 
 
-def plot_expectations(res, *, time_unit_s: float) -> None:
-    # time axis in ps for readability
-    t_solver = np.asarray(getattr(res, "tlist", None))
-    if t_solver.size == 0:
-        # fallback: some engines store it on the problem; adjust if needed
-        raise AttributeError(
-            "Result has no tlist; pass it explicitly if needed."
-        )
-    t_ps = (t_solver * float(time_unit_s)) * 1e12
+def plot_drive_omega(
+    drive: ClassicalFieldDriveU, *, tlist: np.ndarray, time_unit_s: float
+) -> None:
+    t_solver = np.asarray(tlist, dtype=float).reshape(-1)
+    t_s = t_solver * float(time_unit_s)
+    w = np.asarray([drive.omega_L_rad_s(float(ts)) for ts in t_s], dtype=float)
 
-    expect = getattr(res, "expect", None)
-    if expect is None or len(expect) == 0:
-        print("No expectations recorded (res.expect is empty).")
-        return
-
-    def _get(name: str) -> np.ndarray:
-        y = np.asarray(expect[name], dtype=float)
-        if y.shape[0] != t_ps.shape[0]:
-            raise ValueError(
-                f"Trace {name} has length {
-                    y.shape[0]} but t has {t_ps.shape[0]}"
-            )
-        return y
-
-    # --- QD populations ---
-    pop_keys = ["pop_G", "pop_X1", "pop_X2", "pop_XX"]
-    pop_keys = [k for k in pop_keys if k in expect]
-
-    if pop_keys:
-        plt.figure()
-        for k in pop_keys:
-            plt.plot(t_ps, _get(k), label=k)
-        plt.xlabel("t (ps)")
-        plt.ylabel("population")
-        plt.ylim(-0.05, 1.05)
-        plt.legend()
-        plt.title("QD state populations")
-        plt.tight_layout()
-        plt.show()
-
-    # --- Photon numbers ---
-    n_keys = ["n_GX_H", "n_GX_V", "n_XX_H", "n_XX_V"]
-    n_keys = [k for k in n_keys if k in expect]
-
-    if n_keys:
-        plt.figure()
-        for k in n_keys:
-            plt.plot(t_ps, _get(k), label=k)
-        plt.xlabel("t (ps)")
-        plt.ylabel("mean photon number")
-        plt.legend()
-        plt.title("Photon numbers in output modes")
-        plt.tight_layout()
-        plt.show()
-
-    # --- Sanity check: total population (should be ~1 if no leakage) ---
-    if all(k in expect for k in ["pop_G", "pop_X1", "pop_X2", "pop_XX"]):
-        total = _get("pop_G") + _get("pop_X1") + \
-            _get("pop_X2") + _get("pop_XX")
-        plt.figure()
-        plt.plot(t_ps, total, label="pop_total")
-        plt.xlabel("t (ps)")
-        plt.ylabel("sum populations")
-        plt.title("Population conservation check")
-        plt.tight_layout()
-        plt.show()
+    plt.figure()
+    plt.plot(t_s * 1e12, w)
+    plt.xlabel("t (ps)")
+    plt.ylabel("omega_L(t) (rad/s)")
+    plt.title("Instantaneous carrier frequency")
+    plt.tight_layout()
+    plt.show()
 
 
 def main() -> None:
-    # Build a minimal spec (adapt constructors to your real ones)
+    # --- QD spec ---
     energy = EnergyStructure(
         X1=Q(1.201, "eV"),
         X2=Q(1.201, "eV"),
         XX=Q(2.600, "eV"),
     )
-    dipoles = DipoleParams(
-        mu_default=Q(1e-27, "C*m")
-    )  # your real dipole params
-
+    dipoles = DipoleParams(mu_default=Q(1e-27, "C*m"))
     qd = QuantumDot(energy=energy, dipoles=dipoles)
 
-    # Build one drive (your real drive type)
+    # --- solver grid ---
+    time_unit_s = float(Q(1.0, "ps").to("s").magnitude)
+    tlist = np.linspace(0.0, 200.0, 2001)  # solver units
 
-    drive = gaussian_field_drive(
-        t0=Q(30, "ps"),
-        sigma=Q(10, "ps"),
+    # --- choose a target for setting omega0 ---
+    # For a 2ph drive of G<->XX, your decoder uses 2*omega_L vs omega_ref.
+    omega_ref = float(qd.derived.omega_ref_rad_s(TransitionPair.G_XX))  # rad/s
+    omega0 = 0.5 * omega_ref  # per-photon carrier
+
+    # --- build a Gaussian drive first (envelope + amplitude etc.) ---
+    base = gaussian_field_drive(
+        t0=Q(60, "ps"),
+        sigma=Q(8, "ps"),
         E0=Q(4e5, "V/m"),
-        energy=Q(1.3, "eV"),  # or omega0=..., or wavelength=...
+        energy=Q(1.3, "eV"),
         delta_omega=Q(0.0, "rad/s"),
         pol_state=None,
         preferred_kind="2ph",
-        label="test_drive",
+        label="chirped_drive",
     )
 
-    # Simulation settings
-    time_unit_s = float(Q(1.0, "ps").to("s").magnitude)
-    tlist = np.linspace(0.0, 200.0, 401)  # solver units
+    # --- add chirp using your existing carrier_profiles ---
+    # Option A: linear chirp delta_omega(t) = rate * (t - t0)
+    # rate units: rad/s^2
+    delta_fn = carrier_profiles.linear_chirp(
+        rate=Q(6.0e22, "rad/s^2"), t0=Q(60, "ps")
+    )
 
+    # Option B: smooth tanh chirp delta_omega(t) = delta_max * tanh((t - t0)/tau)
+    # delta_fn = carrier_profiles.tanh_chirp(t0=Q(60, "ps"), delta_max=Q(5.0e11, "rad/s"), tau=Q(6, "ps"))
+
+    # Construct Carrier so omega_L(t) = omega0 + delta_fn(t)
+    # IMPORTANT: adjust this line if your Carrier signature differs.
+    carrier = Carrier(omega0=Q(omega0, "rad/s"), delta_omega=delta_fn)
+
+    drive = ClassicalFieldDriveU(
+        envelope=base.envelope,
+        amplitude=base.amplitude,
+        carrier=carrier,
+        pol_state=base.pol_state,
+        pol_transform=base.pol_transform,
+        preferred_kind=base.preferred_kind,
+        label="chirped_linear",
+    )
+
+    # Sanity plot of omega_L(t)
+    plot_drive_omega(drive, tlist=tlist, time_unit_s=time_unit_s)
+
+    # --- run ---
     engine = SimulationEngine(audit=True)
 
-    # IMPORTANT: supply drive_id explicitly so we can map id -> payload
-    specs = [DriveSpec(payload=drive, drive_id="test_drive")]
-
-    # Inject drive_id -> payload mapping into decode context
-    # engine will call this normally; here for access
-
-    time_unit_s = float(Q(1.0, "ps").to("s").magnitude)
     units = UnitSystem(time_unit_s=time_unit_s)
-    bundle = qd.compile_bundle(units=units)
+    specs = [DriveSpec(payload=drive, drive_id="chirped_linear")]
 
-    problem = engine.compile(
-        qd,
-        tlist=tlist,
-        time_unit_s=time_unit_s,
-        rho0=None,
-        drives=specs,
+    bundle = qd.compile_bundle(units=units)  # placeholder, ignore
+    # Use your normal pattern:
+    bundle = qd.compile_bundle(
+        units=__import__("smef.core.units", fromlist=["UnitSystem"]).UnitSystem(
+            time_unit_s=time_unit_s
+        )
     )
-
-    print("num c_terms:", len(problem.c_terms))
-    for i, t in enumerate(problem.c_terms):
-        print(i, t.label, t.meta)
-
-    # If you want to actually solve, add rho0 and run:
-
     dims = bundle.modes.dims()
     rho0 = rho0_qd_vacuum(dims=dims, qd_state=QDState.G)
 
     solve_options = {
-        "method": "bdf",  # stiff-safe; "adams" can be fine but bdf is more robust here
+        "method": "bdf",
         "atol": 1e-10,
         "rtol": 1e-8,
         "nsteps": 200000,
-        "max_step": 0.02,  # solver units; for sigma=3ps and time_unit=1ps this is conservative
+        "max_step": 0.02,
         "progress_bar": "tqdm",
     }
+
     res = engine.run(
         qd,
         tlist=tlist,
@@ -269,6 +232,8 @@ def main() -> None:
         drives=specs,
         solve_options={"qutip_options": solve_options},
     )
+
+    # Use your existing plot helper if you want:
     plot_qd_run_summary(res, time_unit_s=time_unit_s, drive=drive)
 
 
