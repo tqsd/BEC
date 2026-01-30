@@ -245,11 +245,26 @@ class QDDriveDecoder(DriveDecoderProto):
 
         # optionally select multiple close-by targets
         chosen = [scored[0]]
+
         if bool(policy.allow_multi):
             thr = best_score + float(policy.k_bandwidth) * float(sigma_omega)
             for item in scored[1:]:
                 if float(item[0]) <= thr:
                     chosen.append(item)
+
+        print(
+            "chosen_final:",
+            [
+                (
+                    p.value if hasattr(p, "value") else str(p),
+                    kind,
+                    c_mag,
+                    d0,
+                    score,
+                )
+                for score, p, kind, _, c_mag, d0 in chosen
+            ],
+        )
 
         out: List[ResolvedDrive] = []
         for score, pair, kind, omega_ref, c_mag, d0 in chosen:

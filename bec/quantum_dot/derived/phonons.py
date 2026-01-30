@@ -20,3 +20,14 @@ class PhononsMixin:
 
     def polaron_B(self, tr: Transition) -> float:
         return float(self.phonon_outputs.B_polaron_per_transition.get(tr, 1.0))
+
+    @property
+    def gamma_phi_eid_scale(self) -> float:
+        qd = self.qd
+        P = getattr(qd, "phonons", None)
+        if P is None:
+            return 0.0
+        ph = getattr(P, "phenomenological", None)
+        if ph is None:
+            return 0.0
+        return float(getattr(ph, "gamma_phi_eid_scale", 0.0) or 0.0)

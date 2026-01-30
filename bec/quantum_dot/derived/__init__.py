@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from bec.quantum_dot.derived.phonons import PhononsMixin
 from bec.quantum_dot.derived.rates import RatesMixin
+from bec.quantum_dot.derived.report import PlainReportMixin
 
 from .core import DerivedQDBase
 from .dipoles import DipolesMixin
@@ -17,5 +18,6 @@ class DerivedQD(
     DipolesMixin,
     RatesMixin,
     PhononsMixin,
+    PlainReportMixin,
 ):
     pass

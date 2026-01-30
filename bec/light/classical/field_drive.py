@@ -188,3 +188,29 @@ class ClassicalFieldDriveU:
             include_curve=show_ascii_plot,
         )
         return render_rich(rep, show_ascii_plot=show_ascii_plot)
+
+    def with_E0(self, E0: Any) -> "ClassicalFieldDriveU":
+        """
+        Return a new drive with the same envelope/carrier/polarization/etc.,
+        but with a new field amplitude E0 (units: V/m).
+        """
+        E0_q = as_quantity(E0, "V/m")
+        return type(self)(
+            envelope=self.envelope,
+            amplitude=FieldAmplitude(E0=E0_q),
+            carrier=self.carrier,
+            pol_state=self.pol_state,
+            pol_transform=self.pol_transform,
+            preferred_kind=self.preferred_kind,
+            label=self.label,
+        )
+
+    def scaled(self, factor: float) -> "ClassicalFieldDriveU":
+        """
+        Return a new drive with E0 multiplied by `factor`.
+        """
+        f = float(factor)
+        if f <= 0.0:
+            raise ValueError("factor must be > 0")
+        # FieldAmplitude stores unitful E0 already
+        return self.with_E0(self.amplitude.E0 * f)

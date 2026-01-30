@@ -183,15 +183,19 @@ class PhononModel:
         g_xp = float(P.phenomenological.gamma_phi_Xp_1_s)
         g_xm = float(P.phenomenological.gamma_phi_Xm_1_s)
         g_xx = float(P.phenomenological.gamma_phi_XX_1_s)
+        g_12 = float(P.phenomenological.gamma_relax_X1_X2_1_s)
+        g_21 = float(P.phenomenological.gamma_relax_X2_X1_1_s)
 
         if g_xp > 0.0:
             rates[RateKey.PH_DEPH_X1] = as_quantity(g_xp, "1/s")
         if g_xm > 0.0:
             rates[RateKey.PH_DEPH_X2] = as_quantity(g_xm, "1/s")
         if g_xx > 0.0:
-            # No RateKey for XX dephasing in your enum yet.
-            # Add RateKey.PH_DEPH_XX if you want to expose it.
-            pass
+            rates[RateKey.PH_DEPH_XX] = as_quantity(g_xx, "1/s")
+        if g_12 > 0.0:
+            rates[RateKey.PH_RELAX_X1_X2] = as_quantity(g_12, "1/s")
+        if g_21 > 0.0:
+            rates[RateKey.PH_RELAX_X2_X1] = as_quantity(g_21, "1/s")
 
         Bmap: Dict[Transition, float] = {}
         if (

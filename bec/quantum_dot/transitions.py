@@ -221,6 +221,7 @@ class RateKey(str, Enum):
     RAD_X2_G = "RAD_X2_G"
     PH_DEPH_X1 = "PH_DEPH_X1"
     PH_DEPH_X2 = "PH_DEPH_X2"
+    PH_DEPH_XX = "PH_DEPH_XX"
     PH_RELAX_X1_X2 = "PH_RELAX_X1_X2"
     PH_RELAX_X2_X1 = "PH_RELAX_X2_X1"
 

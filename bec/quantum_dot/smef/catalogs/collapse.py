@@ -19,6 +19,12 @@ def _qd_sym(tr: Transition) -> str:
     return "t_" + str(tr.value)
 
 
+def _qd_op(qd_index: int, symbol: str) -> OpExpr:
+    return OpExpr.atom(
+        EmbeddedKron(indices=(qd_index,), locals=(LocalSymbolOp(symbol),))
+    )
+
+
 def _band_of(tr: Transition) -> str:
     s = str(tr.value)
     if s.startswith("XX_"):
@@ -213,5 +219,59 @@ class QDCollapseCatalog(FrozenCatalog):
                 },
             ),
         ]
+
+        # ---- phonon-induced pure dephasing (phenomenological) ----
+        # L = sqrt(gamma_phi) * P_state
+
+        def _maybe_rate_key(k):
+            return rates.get(k, rates.get(getattr(k, "value", str(k))))
+
+        # X1 dephasing
+        r = _maybe_rate_key(RateKey.PH_DEPH_X1)
+        if r is not None:
+            g = float(units.rate_to_solver(r))
+            if g > 0.0:
+                P = _qd_op(qd_i, "proj_X1")
+                terms.append(
+                    Term(
+                        kind=TermKind.C,
+                        op=OpExpr.scale(complex(np.sqrt(g)), P),
+                        coeff=None,
+                        label="L_ph_deph_X1",
+                        meta={"kind": "phonon_deph", "state": "X1"},
+                    )
+                )
+
+        # X2 dephasing
+        r = _maybe_rate_key(RateKey.PH_DEPH_X2)
+        if r is not None:
+            g = float(units.rate_to_solver(r))
+            if g > 0.0:
+                P = _qd_op(qd_i, "proj_X2")
+                terms.append(
+                    Term(
+                        kind=TermKind.C,
+                        op=OpExpr.scale(complex(np.sqrt(g)), P),
+                        coeff=None,
+                        label="L_ph_deph_X2",
+                        meta={"kind": "phonon_deph", "state": "X2"},
+                    )
+                )
+
+        # XX dephasing
+        r = _maybe_rate_key(RateKey.PH_DEPH_XX)
+        if r is not None:
+            g = float(units.rate_to_solver(r))
+            if g > 0.0:
+                P = _qd_op(qd_i, "proj_XX")
+                terms.append(
+                    Term(
+                        kind=TermKind.C,
+                        op=OpExpr.scale(complex(np.sqrt(g)), P),
+                        coeff=None,
+                        label="L_ph_deph_XX",
+                        meta={"kind": "phonon_deph", "state": "XX"},
+                    )
+                )
 
         return cls(_terms=tuple(terms))

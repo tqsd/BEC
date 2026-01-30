@@ -19,6 +19,8 @@ class PhenomenologicalPhononParams:
     gamma_phi_Xp: QuantityLike = as_rate_1_s(0.0)
     gamma_phi_Xm: QuantityLike = as_rate_1_s(0.0)
     gamma_phi_XX: QuantityLike = as_rate_1_s(0.0)
+    pamma_relax_X1_X2: QuantityLike = as_rate_1_s(0.0)
+    pamma_relax_X2_X1: QuantityLike = as_rate_1_s(0.0)
     gamma_phi_eid_scale: float = 0.0
 
     def __post_init__(self) -> None:
@@ -29,6 +31,14 @@ class PhenomenologicalPhononParams:
             self, "gamma_phi_eid_scale", as_dimless(self.gamma_phi_eid_scale)
         )
         self.validate()
+
+    @property
+    def gamma_relax_X1_X2_1_s(self) -> float:
+        return float(self.pamma_relax_X1_X2.to("1/s").magnitude)
+
+    @property
+    def gamma_relax_X2_X1_1_s(self) -> float:
+        return float(self.pamma_relax_X2_X1.to("1/s").magnitude)
 
     @property
     def gamma_phi_Xp_1_s(self) -> float:

@@ -14,6 +14,8 @@ class QDSymbol(str, Enum):
     T_X2_XX = "t_X2_XX"
     T_G_X1 = "t_G_X1"
     T_G_X2 = "t_G_X2"
+    T_X1_X2 = "t_X1_X2"
+    T_X2_X1 = "t_X2_X1"
 
     T_XX_G = "t_XX_G"
     T_G_XX = "t_G_XX"
