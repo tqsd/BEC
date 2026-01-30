@@ -81,6 +81,63 @@ class PhononOutputs:
     rates: Dict[RateKey, QuantityLike] = field(default_factory=dict)
     b_polaron: Dict[Transition, float] = field(default_factory=dict)
     eid: PolaronEIDConfig = field(default_factory=PolaronEIDConfig)
+    polaron_rates: Optional[PolaronDriveRates] = None
+
+
+@dataclass(frozen=True)
+class PolaronDriveRates:
+    """
+    Float-only helpers for drive-dependent phonon rates.
+
+    This lives in the phonon model layer so emitters don't implement physics.
+    Rates are returned in 1/s (physical units as floats).
+    """
+
+    enabled: bool
+    alpha_s2: float
+    omega_c_rad_s: float
+    temperature_K: float
+
+    def _j_of_w(self, w: np.ndarray) -> np.ndarray:
+        w = np.asarray(w, dtype=float)
+        out = np.zeros_like(w)
+        alpha = float(self.alpha_s2)
+        wc = float(self.omega_c_rad_s)
+        if alpha <= 0.0 or wc <= 0.0:
+            return out
+        m = w > 0.0
+        x = w[m] / wc
+        out[m] = alpha * (w[m] ** 3) * np.exp(-(x * x))
+        return out
+
+    def gamma_eid_1_s(
+        self,
+        omega_solver: np.ndarray,
+        detuning_rad_s: np.ndarray,
+        *,
+        time_unit_s: float,
+        scale: float = 1.0,
+    ) -> np.ndarray:
+        """
+        Minimal physically-shaped EID:
+          gamma_eid(t) ~ |Omega(t)|^2 * J(|Delta(t)|)
+        where Omega is converted from solver units back to rad/s.
+        """
+        if not bool(self.enabled):
+            return np.zeros_like(np.asarray(detuning_rad_s, dtype=float))
+
+        omega_solver = np.asarray(omega_solver, dtype=complex)
+        det = np.asarray(detuning_rad_s, dtype=float)
+
+        s = float(time_unit_s)
+        if s <= 0.0:
+            raise ValueError("time_unit_s must be > 0")
+
+        omega_rad_s = omega_solver / s
+        om2 = (omega_rad_s.real**2) + (omega_rad_s.imag**2)
+
+        jw = self._j_of_w(np.abs(det))
+        return float(scale) * om2 * jw
 
 
 class PhononModelProto(Protocol):
@@ -370,4 +427,25 @@ class PolaronLAPhononModel:
             temperature_K=float(P.temperature.to("K").magnitude),
         )
 
-        return PhononOutputs(rates=rates, b_polaron=bmap, eid=eid)
+        pol = P.polaron_la
+        eid = PolaronEIDConfig(
+            enabled=bool(
+                P.kind is PhononModelKind.POLARON_LA and pol.enable_eid
+            ),
+            alpha_s2=float(pol.alpha.to("s**2").magnitude),
+            omega_c_rad_s=float(pol.omega_c.to("rad/s").magnitude),
+            temperature_K=float(P.temperature.to("K").magnitude),
+        )
+
+        polaron_rates = None
+        if eid.enabled:
+            polaron_rates = PolaronDriveRates(
+                enabled=True,
+                alpha_s2=eid.alpha_s2,
+                omega_c_rad_s=eid.omega_c_rad_s,
+                temperature_K=eid.temperature_K,
+            )
+
+        return PhononOutputs(
+            rates=rates, b_polaron=bmap, eid=eid, polaron_rates=polaron_rates
+        )

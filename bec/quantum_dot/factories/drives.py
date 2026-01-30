@@ -29,23 +29,30 @@ def _normalize_hv(v: np.ndarray) -> Tuple[complex, complex]:
 
 
 def auto_pol_for_transition(qd, *, pair: TransitionPair) -> JonesState:
-    derived = qd.derived
+    """
+    Choose JonesState aligned with the transition dipole (directed fwd transition).
+
+    Uses:
+      - qd.derived_view.t_registry.directed(pair)
+      - qd.derived_view.dipoles.e_pol_hv(tr)  -> length-2 complex
+    """
+    derived = qd.derived_view
     fwd, _ = derived.t_registry.directed(pair)
-    e = derived.e_pol_hv(fwd)
+
+    e = np.asarray(derived.dipoles.e_pol_hv(fwd), dtype=complex).reshape(2)
     j0, j1 = _normalize_hv(e)
     return JonesState(jones=(j0, j1), normalize=True)
 
 
 def _infer_kind_from_pair(pair: TransitionPair) -> str:
     # If your TransitionRegistry exposes metadata, prefer that.
-    # For now: assume G<->XX is 2ph, everything else 1ph.
     if pair is TransitionPair.G_XX:
         return "2ph"
     return "1ph"
 
 
 def _infer_omega0_rad_s(qd, *, pair: TransitionPair, kind: str) -> float:
-    derived = qd.derived
+    derived = qd.derived_view
     omega_ref = float(derived.omega_ref_rad_s(pair))  # physical rad/s
     if kind == "2ph":
         # emitter uses mult=2 for detuning and assumes omega_L is per-photon
@@ -73,13 +80,13 @@ def make_gaussian_field_drive_pi(
     Build a Gaussian pi (or general theta) pulse for a given TransitionPair.
 
     - Auto polarization: if pol_state is None, align with the transition dipole.
-    - Auto carrier: if omega0_rad_s is None, infer from qd.derived.omega_ref_rad_s(pair)
+    - Auto carrier: if omega0_rad_s is None, infer from derived_view.omega_ref_rad_s(pair)
       and preferred_kind (1ph -> omega_ref, 2ph -> 0.5*omega_ref).
-    - Calibration: choose E0 so that (in the closed two-level resonant limit)
+    - Calibration: choose E0 so that (closed two-level resonant limit)
         integral Omega(t) dt = theta_rad
       where Omega(t) is the Rabi frequency used by SMEF for this drive.
     """
-    derived = qd.derived
+    derived = qd.derived_view
     fwd, _bwd = derived.t_registry.directed(pair)
 
     kind = (
@@ -99,6 +106,7 @@ def make_gaussian_field_drive_pi(
     if E_pol is None:
         raise ValueError("Could not construct effective polarization")
 
+    # Projection of polarization onto dipole unit vector
     proj = complex(derived.drive_projection(fwd, E_pol))
     proj_abs = abs(proj)
     if proj_abs == 0.0:
@@ -108,14 +116,19 @@ def make_gaussian_field_drive_pi(
 
     mu_Cm = float(magnitude(derived.mu(fwd), "C*m"))
 
+    # Polaron renormalization is per directed transition (fwd)
     B = float(derived.polaron_B(fwd)) if compensate_polaron else 1.0
-    if B <= 0.0:
-        raise ValueError(f"Invalid polaron_B (must be > 0) got {B}")
+    if not np.isfinite(B) or B <= 0.0:
+        raise ValueError(
+            "Invalid polaron_B (must be finite and > 0), got %s" % (B,)
+        )
 
     t0_q = as_quantity(t0, "s")
     sigma_q = as_quantity(sigma, "s")
     env = GaussianEnvelopeU(t0=t0_q, sigma=sigma_q)
     area_env_s = float(env.area_seconds())
+    if area_env_s <= 0.0:
+        raise ValueError("Envelope area must be > 0")
 
     # Omega(t) = (B * mu * proj / hbar) * E_env(t)
     # E_env(t) = E0 * g(t), integral g(t) dt = area_env_s
@@ -123,8 +136,7 @@ def make_gaussian_field_drive_pi(
     hbar_SI = float(hbar.to("J*s").magnitude)
     E0_V_m = float(theta_rad) * hbar_SI / (B * mu_Cm * proj_abs * area_env_s)
 
-    # Carrier: always set if possible, so detuning term can be emitted.
-    # If user doesn't provide omega0, infer it from the transition.
+    # Carrier: include so detuning term can be emitted.
     w0 = omega0_rad_s
     if w0 is None:
         w0 = _infer_omega0_rad_s(qd, pair=pair, kind=kind)

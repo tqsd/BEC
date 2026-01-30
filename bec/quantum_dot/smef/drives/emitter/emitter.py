@@ -23,6 +23,7 @@ from bec.quantum_dot.smef.drives.emitter.detuning_term import (
 from bec.quantum_dot.smef.drives.emitter.drive_term import build_drive_h_term
 from bec.quantum_dot.smef.drives.emitter.eid_terms import (
     build_eid_c_term_phenom,
+    build_eid_c_term_polaron,
 )
 from bec.quantum_dot.smef.drives.emitter.sampling import (
     payload_from_ctx,
@@ -31,10 +32,22 @@ from bec.quantum_dot.smef.drives.emitter.sampling import (
 
 
 def _eid_scale_from_derived(derived: Any) -> float:
-    # Keep this contract simple and derived-view centric.
-    # If missing -> disabled.
     val = getattr(derived, "gamma_phi_eid_scale", 0.0)
-    return float(val or 0.0)
+    try:
+        return float(val or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _polaron_rates_from_derived(derived: Any) -> Any:
+    """
+    Returns derived.phonon_outputs.polaron_rates if present, else None.
+    Kept permissive so derived implementations can evolve without breaking.
+    """
+    po = getattr(derived, "phonon_outputs", None)
+    if po is None:
+        return None
+    return getattr(po, "polaron_rates", None)
 
 
 @dataclass
@@ -44,8 +57,10 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
 
     Emits (per ResolvedDrive / TransitionPair):
       - H_drive always
-      - L_eid optionally (phenomenological, if derived.gamma_phi_eid_scale > 0)
       - H_det optionally (if payload.omega_L_rad_s(t) exists)
+      - L_eid optionally:
+          * prefer polaron-shaped EID if detuning exists and polaron_rates enabled
+          * else fall back to phenomenological EID if eid_scale > 0
     """
 
     qd_index: int = 0  # fixed by QDModes layout
@@ -65,20 +80,24 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
 
         tlist_solver = np.asarray(coeffs.tlist, dtype=float).reshape(-1)
 
-        # Required by detuning sampling (omega_L(t_phys)) and for unit conversion.
         time_unit_s = getattr(decode_ctx, "time_unit_s", None)
         if time_unit_s is None:
             raise ValueError(
                 "QDDriveDecodeContext.time_unit_s missing. "
                 "Ensure SMEF calls decode_ctx.with_solver_grid(tlist=..., time_unit_s=...)."
             )
+
         s = float(time_unit_s)
+        if s <= 0.0:
+            raise ValueError("time_unit_s must be > 0")
+
         t_phys_s = s * tlist_solver
 
         eid_scale = _eid_scale_from_derived(derived)
+        polaron_rates = _polaron_rates_from_derived(derived)
 
-        h_terms = []
-        c_terms = []
+        h_terms: list[Any] = []
+        c_terms: list[Any] = []
 
         for rd in resolved:
             pair = rd.transition_key
@@ -87,11 +106,9 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
             if not derived.t_registry.spec(pair).drive_allowed:
                 continue
 
-            # directed transitions low->high and high->low
             fwd, bwd = derived.t_registry.directed(pair)
             src, dst = derived.t_registry.endpoints(fwd)
 
-            # Omega(t) from strength stage
             key = (rd.drive_id, pair)
             if key not in coeffs.coeffs:
                 raise KeyError(
@@ -121,50 +138,68 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
                 )
             )
 
-            # 2) optional EID (phenomenological)
-            eid_term = build_eid_c_term_phenom(
-                qd_index=qd_index,
-                drive_id=rd.drive_id,
-                pair=pair,
-                dst_proj_state=dst,
-                omega_solver=omega_solver,
-                eid_scale=eid_scale,
-                meta=dict(rd.meta),
-            )
-            if eid_term is not None:
-                c_terms.append(eid_term)
-
-            # 3) optional detuning term (needs omega_L(t))
+            # 2) optional detuning term
+            detuning_rad_s = None
             payload = payload_from_ctx(rd.drive_id, decode_ctx)
             omega_L = sample_omega_L_rad_s(payload, t_phys_s)
-            if omega_L is None:
-                continue
 
-            omega_ref = rd.meta.get("omega_ref_rad_s")
-            if omega_ref is None:
-                omega_ref = float(derived.omega_ref_rad_s(pair))
-            omega_ref_f = float(omega_ref)
+            if omega_L is not None:
+                omega_ref = rd.meta.get("omega_ref_rad_s")
+                if omega_ref is None:
+                    omega_ref = float(derived.omega_ref_rad_s(pair))
+                omega_ref_f = float(omega_ref)
 
-            kind = rd.meta.get("kind", "1ph")
-            mult = 2.0 if str(kind) == "2ph" else 1.0
+                kind = rd.meta.get("kind", "1ph")
+                mult = 2.0 if str(kind) == "2ph" else 1.0
 
-            detuning_rad_s = (mult * omega_L) - omega_ref_f
+                detuning_rad_s = (mult * omega_L) - omega_ref_f
 
-            h_terms.append(
-                build_detuning_h_term(
+                h_terms.append(
+                    build_detuning_h_term(
+                        qd_index=qd_index,
+                        drive_id=rd.drive_id,
+                        pair=pair,
+                        src=src,
+                        dst=dst,
+                        detuning_rad_s=detuning_rad_s,
+                        time_unit_s=s,
+                        meta={
+                            **dict(rd.meta),
+                            "omega_ref_rad_s": omega_ref_f,
+                            "detuning_mult": float(mult),
+                        },
+                    )
+                )
+
+            # 3) optional EID collapse (prefer polaron-shaped if possible)
+            eid_term = None
+
+            if detuning_rad_s is not None:
+                eid_term = build_eid_c_term_polaron(
                     qd_index=qd_index,
                     drive_id=rd.drive_id,
                     pair=pair,
-                    src=src,
-                    dst=dst,
+                    dst_proj_state=dst,
+                    omega_solver=omega_solver,
                     detuning_rad_s=detuning_rad_s,
                     time_unit_s=s,
-                    meta={
-                        **dict(rd.meta),
-                        "omega_ref_rad_s": omega_ref_f,
-                        "detuning_mult": float(mult),
-                    },
+                    polaron_rates=polaron_rates,
+                    scale=eid_scale,
+                    meta=dict(rd.meta),
                 )
-            )
+
+            if eid_term is None:
+                eid_term = build_eid_c_term_phenom(
+                    qd_index=qd_index,
+                    drive_id=rd.drive_id,
+                    pair=pair,
+                    dst_proj_state=dst,
+                    omega_solver=omega_solver,
+                    eid_scale=eid_scale,
+                    meta=dict(rd.meta),
+                )
+
+            if eid_term is not None:
+                c_terms.append(eid_term)
 
         return DriveTermBundle(h_terms=tuple(h_terms), c_terms=tuple(c_terms))

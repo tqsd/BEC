@@ -40,36 +40,32 @@ class QDDerivedView:
 
     def polaron_B(self, tr: Transition) -> float:
         """
-        Polaron renormalization factor B(tr) in [0, 1] (usually).
-        If phonons disabled or not provided by model, return 1.0.
+        Polaron renormalization factor B(tr) for this specific directed transition.
+        Returns 1.0 if unavailable/disabled.
         """
         po = self.phonon_outputs
         if po is None:
             return 1.0
-        bmap = getattr(po, "B_polaron_per_transition", None)
+
+        bmap = getattr(po, "b_polaron", None)
         if not isinstance(bmap, Mapping):
             return 1.0
+
         try:
             v = bmap.get(tr, 1.0)
-        except Exception:
-            return 1.0
-        try:
             b = float(v)
         except Exception:
             return 1.0
+
         if not np.isfinite(b):
             return 1.0
-        # be conservative; avoid negative Bs from weird inputs
-        return float(max(0.0, b))
 
-    @cached_property
-    def gamma_phi_eid_scale(self) -> float:
-        """
-        Optional phenomenological EID scale used by the emitter:
-          gamma_eid_solver(t) = scale * |Omega_solver(t)|^2
-        Default off.
-        """
-        return 0.0
+        # clamp into [0, 1] (typical physical range)
+        if b < 0.0:
+            return 0.0
+        if b > 1.0:
+            return 1.0
+        return b
 
     # ---------- drive pipeline contract: decoder ----------
 
@@ -79,6 +75,10 @@ class QDDerivedView:
             if self.t_registry.spec(pair).drive_allowed:
                 out.append(pair)
         return tuple(out)
+
+    def polaron_B_pair(self, pair: TransitionPair) -> float:
+        fwd, _ = self.t_registry.directed(pair)
+        return self.polaron_B(fwd)
 
     def drive_kind(self, pair: TransitionPair) -> str:
         spec = self.t_registry.spec(pair)
@@ -107,3 +107,14 @@ class QDDerivedView:
         e_x1 = float(magnitude(self.energy.X1, "eV"))
         e_x2 = float(magnitude(self.energy.X2, "eV"))
         return float(e_x1 - e_x2)
+
+    @cached_property
+    def gamma_phi_eid_scale(self) -> float:
+        ph = self.phonons
+        if ph is None:
+            return 0.0
+        val = getattr(ph.phenomenological, "gamma_phi_eid_scale", 0.0)
+        try:
+            return float(val)
+        except Exception:
+            return 0.0
