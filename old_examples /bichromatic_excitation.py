@@ -66,7 +66,7 @@ def main() -> None:
         sigma=sigma,
         preferred_kind="1ph",
         label="pump_GX1_pi",
-        include_polaron=True,
+        compensate_polaron=True,
         # omega0_rad_s omitted -> inferred as omega_ref(G<->X1)
         # pol_state omitted -> auto from dipole
     )
@@ -78,7 +78,7 @@ def main() -> None:
         sigma=sigma,
         preferred_kind="1ph",
         label="stokes_X1XX_pi",
-        include_polaron=True,
+        compensate_polaron=True,
         # omega0 inferred as omega_ref(X1<->XX)
     )
 

@@ -4,12 +4,10 @@ from bec.quantum_dot.smef.drives.context import (
 )
 from bec.quantum_dot.smef.drives.decoder import QDDriveDecoder
 from bec.quantum_dot.smef.drives.strength import QDDriveStrengthModel
-from bec.quantum_dot.smef.drives.emitter import QDDriveTermEmitter
 
 __all__ = [
     "DecodePolicy",
     "QDDriveDecodeContext",
     "QDDriveDecoder",
     "QDDriveStrengthModel",
-    "QDDriveTermEmitter",
 ]

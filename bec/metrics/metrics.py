@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
+import math
 
 from bec.metrics.bell import fidelity_to_bell
 from bec.metrics.decompose import PhotonDecomposition, decompose_photons
@@ -12,6 +13,42 @@ from bec.metrics.linops import partial_trace
 from bec.metrics.mode_registry import MetricGroups, default_groups, indices_of
 from bec.metrics.photon_count import expected_n_group, expected_n_per_mode
 from bec.metrics.two_photon import TwoPhotonResult, two_photon_postselect
+
+
+def _fmt_num(x: float, precision: int) -> str:
+    return f"{x:.{int(precision)}g}"
+
+
+def _safe_float(x: Any) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return float("nan")
+
+
+def _delta_rel(a: float, b: float) -> tuple[float, float]:
+    """
+    Return (delta, rel), where:
+      delta = b - a
+      rel = (b - a) / max(abs(a), eps)
+    """
+    eps = 1e-15
+    da = b - a
+    denom = max(abs(a), eps)
+    return da, da / denom
+
+
+def _fmt_triplet(a: float, b: float, precision: int) -> str:
+    d, r = _delta_rel(a, b)
+    a_s = _fmt_num(a, precision)
+    b_s = _fmt_num(b, precision)
+    d_s = _fmt_num(d, precision)
+    r_s = _fmt_num(100.0 * r, precision)
+    return f"{a_s} -> {b_s}   d={d_s}   rel={r_s}%"
+
+
+def _is_finite(x: float) -> bool:
+    return math.isfinite(float(x))
 
 
 @dataclass(frozen=True)
@@ -133,6 +170,175 @@ class QDMetrics:
         lines.append("")
         lines.append("=" * 78)
 
+        return "\n".join(lines)
+
+    def compare(
+        self,
+        other: "QDMetrics",
+        *,
+        name_self: str = "A",
+        name_other: str = "B",
+        precision: int = 6,
+        include_meta: bool = False,
+    ) -> str:
+        """
+        Compare two QDMetrics objects.
+
+        Returns a plain-text report (ASCII only) suitable for printing/logging.
+
+        Convention:
+          - We show A -> B plus delta and relative change (relative to A).
+          - For quantities that can be 0 (p11 etc), relative change is still computed
+            with a tiny epsilon denominator.
+        """
+        p = int(precision)
+        lines: list[str] = []
+
+        lines.append("=" * 78)
+        lines.append("QDMETRICS COMPARISON REPORT")
+        lines.append("=" * 78)
+        lines.append(f"{name_self} -> {name_other}")
+        lines.append("")
+
+        # --- Sanity
+        lines.append("STATE SANITY")
+        lines.append("-" * 78)
+        lines.append(
+            f"Trace             : {_fmt_triplet(
+                self.sanity.trace, other.sanity.trace, p)}"
+        )
+        lines.append(
+            f"Hermiticity error : {_fmt_triplet(
+                self.sanity.hermitian_error, other.sanity.hermitian_error, p)}"
+        )
+        lines.append(
+            f"Min eigenvalue    : {_fmt_triplet(
+                self.sanity.min_eig, other.sanity.min_eig, p)}"
+        )
+
+        # --- QD populations
+        lines.append("")
+        lines.append("QD POPULATIONS (final state)")
+        lines.append("-" * 78)
+        for k in ("G", "X1", "X2", "XX"):
+            a = _safe_float(self.qd_pop.get(k, 0.0))
+            b = _safe_float(other.qd_pop.get(k, 0.0))
+            lines.append(f"{k:>3} : {_fmt_triplet(a, b, p)}")
+
+        # --- Photon decompositions helper
+        def block_decomp(
+            title: str, da: "PhotonDecomposition", db: "PhotonDecomposition"
+        ) -> None:
+            lines.append("")
+            lines.append(title)
+            lines.append("-" * 78)
+            lines.append(
+                f"p0       : {_fmt_triplet(
+                _safe_float(da.p0), _safe_float(db.p0), p)}"
+            )
+            lines.append(
+                f"p1_total : {_fmt_triplet(_safe_float(
+                    da.p1_total), _safe_float(db.p1_total), p)}"
+            )
+            lines.append(
+                f"p2_exact : {_fmt_triplet(_safe_float(
+                    da.p2_exact), _safe_float(db.p2_exact), p)}"
+            )
+
+        block_decomp(
+            "PHOTON NUMBER DECOMPOSITION (GX + XX)",
+            self.photons_all,
+            other.photons_all,
+        )
+        block_decomp(
+            "PHOTON NUMBER DECOMPOSITION (GX only)",
+            self.photons_gx,
+            other.photons_gx,
+        )
+        block_decomp(
+            "PHOTON NUMBER DECOMPOSITION (XX only)",
+            self.photons_xx,
+            other.photons_xx,
+        )
+
+        # --- Counts
+        lines.append("")
+        lines.append("PHOTON NUMBER EXPECTATION VALUES")
+        lines.append("-" * 78)
+        lines.append(
+            f"<n_GX_total> : {_fmt_triplet(
+                self.counts.n_gx_total, other.counts.n_gx_total, p)}"
+        )
+        lines.append(
+            f"<n_XX_total> : {_fmt_triplet(
+                self.counts.n_xx_total, other.counts.n_xx_total, p)}"
+        )
+        lines.append(
+            f"<n_GX_H>     : {_fmt_triplet(
+            self.counts.n_gx_h, other.counts.n_gx_h, p)}"
+        )
+        lines.append(
+            f"<n_GX_V>     : {_fmt_triplet(
+            self.counts.n_gx_v, other.counts.n_gx_v, p)}"
+        )
+        lines.append(
+            f"<n_XX_H>     : {_fmt_triplet(
+            self.counts.n_xx_h, other.counts.n_xx_h, p)}"
+        )
+        lines.append(
+            f"<n_XX_V>     : {_fmt_triplet(
+            self.counts.n_xx_v, other.counts.n_xx_v, p)}"
+        )
+
+        # --- Two-photon and entanglement
+        lines.append("")
+        lines.append("TWO-PHOTON POSTSELECTION (early=XX, late=GX)")
+        lines.append("-" * 78)
+
+        a_p11 = _safe_float(self.two_photon.p11)
+        b_p11 = _safe_float(other.two_photon.p11)
+        lines.append(
+            f"P(n_early=1, n_late=1) : {
+                     _fmt_triplet(a_p11, b_p11, p)}"
+        )
+
+        # Only report fidelity/negativity meaningfully if p11 is nonzero; still show numbers
+        a_bf = _safe_float(self.bell_fidelity_phi_plus)
+        b_bf = _safe_float(other.bell_fidelity_phi_plus)
+        a_ln = _safe_float(self.log_negativity_pol)
+        b_ln = _safe_float(other.log_negativity_pol)
+
+        if a_p11 > 0.0 or b_p11 > 0.0:
+            lines.append(
+                f"Bell fidelity (phi+)  : {_fmt_triplet(a_bf, b_bf, p)}"
+            )
+            lines.append(
+                f"Log negativity        : {
+                         _fmt_triplet(a_ln, b_ln, p)}"
+            )
+        else:
+            lines.append("Bell fidelity (phi+)  : n/a (both p11 = 0)")
+            lines.append("Log negativity        : n/a (both p11 = 0)")
+
+        # --- Optional meta
+        if include_meta:
+            lines.append("")
+            lines.append("META (selected keys)")
+            lines.append("-" * 78)
+            # show common keys only
+            keys = sorted(
+                set(self.meta.keys()).intersection(set(other.meta.keys()))
+            )
+            for k in keys:
+                va = self.meta.get(k)
+                vb = other.meta.get(k)
+                if va == vb:
+                    lines.append(f"{k} : {va}")
+                else:
+                    lines.append(f"{k} : {va} -> {vb}")
+
+        lines.append("")
+        lines.append("=" * 78)
         return "\n".join(lines)
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import numpy as np
 
@@ -9,105 +9,100 @@ from smef.core.ir.ops import EmbeddedKron, LocalSymbolOp, OpExpr
 from smef.core.ir.terms import Term, TermKind
 from smef.core.model.protocols import TermCatalogProto
 
-from bec.quantum_dot.enums import RateKey, Transition, TransitionPair
-from bec.quantum_dot.transitions import RAD_RATE_TO_TRANSITION
+from bec.quantum_dot.enums import RateKey, Transition
 from bec.quantum_dot.smef.catalogs.base import FrozenCatalog
 from bec.quantum_dot.smef.modes import QDModes, QDModeKey
-
-
-def _qd_sym(tr: Transition) -> str:
-    return "t_" + str(tr.value)
-
-
-def _qd_op(qd_index: int, symbol: str) -> OpExpr:
-    return OpExpr.atom(
-        EmbeddedKron(indices=(qd_index,), locals=(LocalSymbolOp(symbol),))
-    )
-
-
-def _band_of(tr: Transition) -> str:
-    s = str(tr.value)
-    if s.startswith("XX_"):
-        return "XX"
-    if (s.startswith("X1_") or s.startswith("X2_")) and s.endswith("_G"):
-        return "GX"
-    raise KeyError(tr)
-
-
-def _adag_on_mode(mode_index: int) -> OpExpr:
-    return OpExpr.atom(
-        EmbeddedKron(indices=(mode_index,), locals=(LocalSymbolOp("adag"),))
-    )
-
-
-def _sigma_on_qd(qd_index: int, tr: Transition) -> OpExpr:
-    return OpExpr.atom(
-        EmbeddedKron(indices=(qd_index,), locals=(LocalSymbolOp(_qd_sym(tr)),))
-    )
-
-
-def _exp_i(phi: float) -> complex:
-    return complex(float(np.cos(phi)), float(np.sin(phi)))
-
-
-def _rotated_adag(
-    modes: QDModes,
-    *,
-    band: str,
-    sign: str,
-    theta: float,
-    phi: float = 0.0,
-) -> OpExpr:
-    """
-    Build rotated creation operator a_sign^\dagger(theta) as an OpExpr sum of
-    H/V creation operators on the two separate subsystems.
-
-    Convention (edit here to match your paper/interpreter exactly):
-
-      a_plus^dag  = cos(theta) * a_H^dag + exp(+i phi) * sin(theta) * a_V^dag
-      a_minus^dag = -exp(-i phi) * sin(theta) * a_H^dag + cos(theta) * a_V^dag
-
-    This is a unitary SU(2) rotation on the (H,V) polarization modes.
-    """
-    iH = modes.index_of(QDModeKey(kind="mode", band=band, pol="H"))
-    iV = modes.index_of(QDModeKey(kind="mode", band=band, pol="V"))
-
-    adagH = _adag_on_mode(iH)
-    adagV = _adag_on_mode(iV)
-
-    c = float(np.cos(float(theta)))
-    s = float(np.sin(float(theta)))
-    eip = _exp_i(float(phi))
-    eimp = np.conjugate(eip)
-
-    if sign == "+":
-        return OpExpr.summation(
-            [OpExpr.scale(c, adagH), OpExpr.scale(eip * s, adagV)]
-        )
-    if sign == "-":
-        return OpExpr.summation(
-            [OpExpr.scale(-eimp * s, adagH), OpExpr.scale(c, adagV)]
-        )
-    raise ValueError("sign must be '+' or '-'.")
-
-
-def _get_rate_value(rates: Mapping[Any, Any], rk: RateKey, *, units) -> float:
-    r = rates.get(rk, rates.get(rk.value))
-    if r is None:
-        raise KeyError(rk)
-    return float(units.rate_to_solver(r))
+from .base import (
+    _get_rate_value,
+    _rotated_adag,
+    _sigma_on_qd,
+    _maybe_get_rate_solver,
+    _exciton_theta_rad_from_qd,
+)
 
 
 @dataclass(frozen=True)
 class QDCollapseCatalog(FrozenCatalog):
-    """
-    Two-channel collapse catalog (paper-style):
+    r"""
+    Collapse-term catalog for a four-level biexciton cascade with explicit field modes.
 
-      L_XX : XX -> X emission channel (sum of X1 and X2 branches)
-      L_GX : X  -> G emission channel (sum of X1 and X2 branches)
+    This catalog constructs SMEF IR collapse terms from the unitful rates exposed by
+    ``qd.rates``. The only unit boundary is the conversion ``units.rate_to_solver(rate)``,
+    after which the catalog uses float solver-units.
 
-    Each branch couples to a rotated polarization creation operator (+/-),
-    implemented as a superposition of H/V mode creation operators.
+    Radiative emission (two-channel form)
+    ------------------------------------
+    The biexciton cascade is represented using two Lindblad operators that each
+    coherently sum over the fine-structure branches:
+
+    .. math::
+
+        L_{XX} &= \sqrt{\gamma_{XX\to X1}} \, \sigma_{XX\to X1} \,
+                 a_{XX,s_1}^\dagger(\theta,\phi)
+              +  \sqrt{\gamma_{XX\to X2}} \, \sigma_{XX\to X2} \,
+                 a_{XX,s_2}^\dagger(\theta,\phi) \\
+
+        L_{GX} &= \sqrt{\gamma_{X1\to G}} \, \sigma_{X1\to G} \,
+                 a_{GX,s_3}^\dagger(\theta,\phi)
+              +  \sqrt{\gamma_{X2\to G}} \, \sigma_{X2\to G} \,
+                 a_{GX,s_4}^\dagger(\theta,\phi)
+
+    where :math:`\sigma_{src\to dst}` is the QD transition operator and
+    :math:`a^\dagger` creates a photon in the corresponding polarization mode.
+
+    Polarization rotation
+    ---------------------
+    Each optical band (``"XX"`` and ``"GX"``) is modeled as two independent
+    polarization subsystems (H and V). The rotated creation operators are defined as:
+
+    .. math::
+
+        a_+^\dagger &= \cos\theta \, a_H^\dagger + e^{i\phi}\sin\theta \, a_V^\dagger \\
+        a_-^\dagger &= -e^{-i\phi}\sin\theta \, a_H^\dagger + \cos\theta \, a_V^\dagger
+
+    The branch-to-sign assignment is controlled by ``xx_branch_signs`` and
+    ``gx_branch_signs``. This matches the common “paper-style” mapping where
+    the two branches emit into orthogonal polarizations.
+
+    Choosing theta
+    --------------
+    If ``theta`` is not provided explicitly, it is derived from QD parameters
+    (fine-structure splitting and exciton mixing) via:
+
+    .. math::
+
+        \theta = \tfrac{1}{2}\operatorname{atan2}(2\delta', \mathrm{FSS})
+
+    using ``qd.energy`` and ``qd.mixing``.
+
+    Phenomenological phonon terms
+    -----------------------------
+    If present in ``qd.rates``, additional constant Lindblad operators are emitted:
+
+    - pure dephasing (projector form):
+
+      .. math::
+
+        L = \sqrt{\gamma_\phi}\, P_{state}
+
+      for X1, X2, and XX.
+
+    - exciton relaxation:
+
+      .. math::
+
+        L = \sqrt{\gamma}\, |dst\rangle\langle src|
+
+      implemented using the registered transition symbols ``t_<Transition.value>``.
+
+    Notes
+    -----
+    - This catalog only builds IR. All physics (radiative and phonon rates)
+      must be computed by unitful models (DecayModel, PhononModel) and exposed
+      through ``qd.rates``.
+    - The materializer must register:
+      - QD local symbols: ``t_<Transition.value>``, ``proj_X1``, ``proj_X2``, ``proj_XX``
+      - Mode local symbol: ``adag`` on each optical mode subsystem.
     """
 
     @classmethod
@@ -120,32 +115,32 @@ class QDCollapseCatalog(FrozenCatalog):
         theta: Optional[float] = None,
         phi: float = 0.0,
         # Which branch uses which rotated polarization.
-        # This matches your old code: XX_X1 uses "-", XX_X2 uses "+" etc.
+        # Default mapping: XX_X1 uses "-", XX_X2 uses "+"; X1_G uses "-", X2_G uses "+".
         xx_branch_signs: Tuple[str, str] = ("-", "+"),  # (XX_X1, XX_X2)
         gx_branch_signs: Tuple[str, str] = ("-", "+"),  # (X1_G,  X2_G)
     ) -> TermCatalogProto:
-        derived = qd.derived
+        if units is None:
+            raise ValueError("units must be provided")
+        if modes is None:
+            raise ValueError("modes must be provided")
 
-        rates: Mapping[Any, Any] = getattr(derived, "rates", None) or {}
+        rates: Mapping[Any, Any] = getattr(qd, "rates", None) or {}
         if not rates:
-            raise AttributeError("No rates found in derived.rates")
+            raise AttributeError("No rates found in qd.rates")
 
         th = (
             float(theta)
             if theta is not None
-            else float(getattr(derived, "exciton_theta_rad", 0.0))
+            else _exciton_theta_rad_from_qd(qd)
         )
+        qd_i = int(modes.index_of(QDModeKey.qd()))
 
-        qd_i = modes.index_of(QDModeKey.qd())
-
-        # Identify the four radiative transitions we care about
-        # (we intentionally do not create one Lindblad operator per transition)
+        # ---- radiative emission (required) ----
         g_xx_x1 = _get_rate_value(rates, RateKey.RAD_XX_X1, units=units)
         g_xx_x2 = _get_rate_value(rates, RateKey.RAD_XX_X2, units=units)
         g_x1_g = _get_rate_value(rates, RateKey.RAD_X1_G, units=units)
         g_x2_g = _get_rate_value(rates, RateKey.RAD_X2_G, units=units)
 
-        # Build L_XX = sqrt(g1) sigma_XX_X1 adag_-(theta) + sqrt(g2) sigma_XX_X2 adag_+(theta)
         sig_xx_x1 = _sigma_on_qd(qd_i, Transition.XX_X1)
         sig_xx_x2 = _sigma_on_qd(qd_i, Transition.XX_X2)
 
@@ -169,7 +164,6 @@ class QDCollapseCatalog(FrozenCatalog):
             ]
         )
 
-        # Build L_GX = sqrt(g1) sigma_X1_G adag_-(theta) + sqrt(g2) sigma_X2_G adag_+(theta)
         sig_x1_g = _sigma_on_qd(qd_i, Transition.X1_G)
         sig_x2_g = _sigma_on_qd(qd_i, Transition.X2_G)
 
@@ -201,9 +195,10 @@ class QDCollapseCatalog(FrozenCatalog):
                 label="L_XX",
                 meta={
                     "band": "XX",
-                    "theta": th,
+                    "theta": float(th),
                     "phi": float(phi),
                     "style": "rotated_2ch",
+                    "xx_branch_signs": tuple(xx_branch_signs),
                 },
             ),
             Term(
@@ -213,65 +208,84 @@ class QDCollapseCatalog(FrozenCatalog):
                 label="L_GX",
                 meta={
                     "band": "GX",
-                    "theta": th,
+                    "theta": float(th),
                     "phi": float(phi),
                     "style": "rotated_2ch",
+                    "gx_branch_signs": tuple(gx_branch_signs),
                 },
             ),
         ]
 
-        # ---- phonon-induced pure dephasing (phenomenological) ----
+        # ---- phonon-induced pure dephasing (optional) ----
         # L = sqrt(gamma_phi) * P_state
-
-        def _maybe_rate_key(k):
-            return rates.get(k, rates.get(getattr(k, "value", str(k))))
-
-        # X1 dephasing
-        r = _maybe_rate_key(RateKey.PH_DEPH_X1)
-        if r is not None:
-            g = float(units.rate_to_solver(r))
-            if g > 0.0:
-                P = _qd_op(qd_i, "proj_X1")
-                terms.append(
-                    Term(
-                        kind=TermKind.C,
-                        op=OpExpr.scale(complex(np.sqrt(g)), P),
-                        coeff=None,
-                        label="L_ph_deph_X1",
-                        meta={"kind": "phonon_deph", "state": "X1"},
-                    )
+        g = _maybe_get_rate_solver(rates, RateKey.PH_DEPH_X1, units=units)
+        if g is not None:
+            P = _qd_op(qd_i, "proj_X1")
+            terms.append(
+                Term(
+                    kind=TermKind.C,
+                    op=OpExpr.scale(complex(np.sqrt(g)), P),
+                    coeff=None,
+                    label="L_ph_deph_X1",
+                    meta={"kind": "phonon_deph", "state": "X1"},
                 )
+            )
 
-        # X2 dephasing
-        r = _maybe_rate_key(RateKey.PH_DEPH_X2)
-        if r is not None:
-            g = float(units.rate_to_solver(r))
-            if g > 0.0:
-                P = _qd_op(qd_i, "proj_X2")
-                terms.append(
-                    Term(
-                        kind=TermKind.C,
-                        op=OpExpr.scale(complex(np.sqrt(g)), P),
-                        coeff=None,
-                        label="L_ph_deph_X2",
-                        meta={"kind": "phonon_deph", "state": "X2"},
-                    )
+        g = _maybe_get_rate_solver(rates, RateKey.PH_DEPH_X2, units=units)
+        if g is not None:
+            P = _qd_op(qd_i, "proj_X2")
+            terms.append(
+                Term(
+                    kind=TermKind.C,
+                    op=OpExpr.scale(complex(np.sqrt(g)), P),
+                    coeff=None,
+                    label="L_ph_deph_X2",
+                    meta={"kind": "phonon_deph", "state": "X2"},
                 )
+            )
 
-        # XX dephasing
-        r = _maybe_rate_key(RateKey.PH_DEPH_XX)
-        if r is not None:
-            g = float(units.rate_to_solver(r))
-            if g > 0.0:
-                P = _qd_op(qd_i, "proj_XX")
-                terms.append(
-                    Term(
-                        kind=TermKind.C,
-                        op=OpExpr.scale(complex(np.sqrt(g)), P),
-                        coeff=None,
-                        label="L_ph_deph_XX",
-                        meta={"kind": "phonon_deph", "state": "XX"},
-                    )
+        g = _maybe_get_rate_solver(rates, RateKey.PH_DEPH_XX, units=units)
+        if g is not None:
+            P = _qd_op(qd_i, "proj_XX")
+            terms.append(
+                Term(
+                    kind=TermKind.C,
+                    op=OpExpr.scale(complex(np.sqrt(g)), P),
+                    coeff=None,
+                    label="L_ph_deph_XX",
+                    meta={"kind": "phonon_deph", "state": "XX"},
                 )
+            )
+
+        # ---- phonon-induced exciton relaxation (optional) ----
+        # L = sqrt(gamma) * |dst><src| == sqrt(gamma) * t_src_dst
+
+        g = _maybe_get_rate_solver(rates, RateKey.PH_RELAX_X1_X2, units=units)
+        if g is not None:
+            # Transition.X1_X2 corresponds to |X2><X1| in your convention.
+            op = _sigma_on_qd(qd_i, Transition.X1_X2)
+            terms.append(
+                Term(
+                    kind=TermKind.C,
+                    op=OpExpr.scale(complex(np.sqrt(g)), op),
+                    coeff=None,
+                    label="L_ph_relax_X1_X2",
+                    meta={"kind": "phonon_relax", "tr": "X1_X2"},
+                )
+            )
+
+        g = _maybe_get_rate_solver(rates, RateKey.PH_RELAX_X2_X1, units=units)
+        if g is not None:
+            # Transition.X2_X1 corresponds to |X1><X2| in your convention.
+            op = _sigma_on_qd(qd_i, Transition.X2_X1)
+            terms.append(
+                Term(
+                    kind=TermKind.C,
+                    op=OpExpr.scale(complex(np.sqrt(g)), op),
+                    coeff=None,
+                    label="L_ph_relax_X2_X1",
+                    meta={"kind": "phonon_relax", "tr": "X2_X1"},
+                )
+            )
 
         return cls(_terms=tuple(terms))

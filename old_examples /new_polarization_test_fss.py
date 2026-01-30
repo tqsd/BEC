@@ -8,6 +8,7 @@ from smef.engine import SimulationEngine, UnitSystem
 from smef.core.units import Q
 
 from bec.light.core.polarization import JonesState
+from bec.metrics.metrics import QDDiagnostics
 from bec.quantum_dot.dot import QuantumDot
 from bec.quantum_dot.enums import QDState, TransitionPair
 from bec.quantum_dot.factories.drives import make_gaussian_field_drive_pi
@@ -30,11 +31,11 @@ def make_qd() -> QuantumDot:
     energy = EnergyStructure.from_params(
         exciton=Q(1.2, "eV"),
         binding=Q(0.2, "eV"),
-        fss=Q(0e-6, "eV"),
+        fss=Q(50e-6, "eV"),
     )
     dipoles = DipoleParams.biexciton_cascade_from_fss(
         mu_default_Cm=Q(1e-28, "C*m"),
-        fss=Q(0e-6, "eV"),
+        fss=Q(50e-6, "eV"),
     )
     return QuantumDot(energy=energy, dipoles=dipoles)
 
@@ -111,21 +112,24 @@ def main() -> None:
 
     # Build a pi-calibrated Gaussian field drive
     # Note: carrier is optional; if set, your emitter can add detuning term.
+    omega_G_XX = float(qd.derived.omega_ref_rad_s(TransitionPair.G_XX))
     drive_H = make_gaussian_field_drive_pi(
         qd,
-        pair=TransitionPair.G_X1,
+        pair=TransitionPair.G_XX,
         t0=Q(150.0, "ps"),
         sigma=Q(40.0, "ps"),
-        preferred_kind="1ph",
+        preferred_kind="2ph",
         label="H1_pi",
-        include_polaron=True,
-        omega0_rad_s=omega_G_X1,
+        compensate_polaron=True,
+        # omega0_rad_s=0.5 * omega_G_XX,
         chirp_rate_rad_s2=None,  # or e.g. 1e22 for a chirp
     )
+    drive_H = drive_H.scaled(0.8)
 
     bundle = qd.compile_bundle(units=units)
     dims = bundle.modes.dims()
     rho0 = rho0_qd_vacuum(dims=dims, qd_state=QDState.G)
+    # drive_H = drive_H.scaled(1.5)
 
     specs = [DriveSpec(payload=drive_H, drive_id=drive_H.label or "H1_pi")]
 
@@ -162,7 +166,10 @@ def main() -> None:
         drives=specs,
         solve_options=solve_options,
     )
+    diag = QDDiagnostics()
+    metrics = diag.compute(qd, res, units=units)
 
+    print(metrics.to_text())
     _debug_expect(res)
 
     figs = plot_runs(

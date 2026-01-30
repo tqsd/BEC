@@ -16,6 +16,7 @@ class PhononsMixin:
         return PhononModel(
             phonon_params=qd.phonons,
             transitions=qd.transitions,
+            exciton_splitting=qd.mixing,
         ).compute()
 
     def polaron_B(self, tr: Transition) -> float:
@@ -31,3 +32,15 @@ class PhononsMixin:
         if ph is None:
             return 0.0
         return float(getattr(ph, "gamma_phi_eid_scale", 0.0) or 0.0)
+
+    @property
+    def polaron_B_X(self) -> float:
+        return 0.5 * (
+            self.polaron_B(Transition.G_X1) + self.polaron_B(Transition.G_X2)
+        )
+
+    @property
+    def polaron_B_XX(self) -> float:
+        return 0.5 * (
+            self.polaron_B(Transition.X1_XX) + self.polaron_B(Transition.X2_XX)
+        )

@@ -32,15 +32,4 @@ class RatesMixin:
             except Exception:
                 pass
 
-        # Keep this if you want, but it won't help unless you actually implement it on qd.phonon_model
-        pm = getattr(self.qd, "phonon_model", None)
-        if pm is not None and hasattr(pm, "compute_rates"):
-            try:
-                r = pm.compute_rates()
-                for k, v in r.items():
-                    key = k.value if hasattr(k, "value") else str(k)
-                    out[key] = as_quantity(v, "1/s")
-            except Exception:
-                pass
-
         return out

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Mapping, Sequence, Tuple
+from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 from bec.quantum_dot.enums import (
     QDState,
@@ -164,6 +164,14 @@ class TransitionRegistry:
         present = set(self._pair_to_dir.keys())
         return tuple(tp for tp in TransitionPair if tp in present)
 
+    def transitions(self) -> Sequence[Transition]:
+        """
+        Return all directed Transition values present in this registry,
+        in stable enum order.
+        """
+        present = set(self._endpoints.keys())
+        return tuple(tr for tr in Transition if tr in present)
+
 
 # ---------- Default 4-level QD maps ----------
 
@@ -178,6 +186,8 @@ ENDPOINTS: dict[Transition, Tuple[QDState, QDState]] = {
     Transition.XX_X2: (QDState.XX, QDState.X2),
     Transition.G_XX: (QDState.G, QDState.XX),
     Transition.XX_G: (QDState.XX, QDState.G),
+    Transition.X1_X2: (QDState.X1, QDState.X2),
+    Transition.X2_X1: (QDState.X2, QDState.X1),
 }
 
 PAIR_TO_DIRECTED: dict[TransitionPair, Tuple[Transition, Transition]] = {

@@ -62,7 +62,7 @@ def make_gaussian_field_drive_pi(
     pol_state: Optional[JonesState] = None,
     pol_transform: Optional[JonesMatrix] = None,
     theta_rad: float = float(np.pi),
-    include_polaron: bool = True,
+    compensate_polaron: bool = True,
     omega0_rad_s: Optional[float] = None,
     chirp_rate_rad_s2: Optional[float] = None,
     chirp_t0=None,
@@ -108,9 +108,9 @@ def make_gaussian_field_drive_pi(
 
     mu_Cm = float(magnitude(derived.mu(fwd), "C*m"))
 
-    B = float(derived.polaron_B(fwd)) if include_polaron else 1.0
+    B = float(derived.polaron_B(fwd)) if compensate_polaron else 1.0
     if B <= 0.0:
-        raise ValueError("Invalid polaron_B (must be > 0)")
+        raise ValueError(f"Invalid polaron_B (must be > 0) got {B}")
 
     t0_q = as_quantity(t0, "s")
     sigma_q = as_quantity(sigma, "s")

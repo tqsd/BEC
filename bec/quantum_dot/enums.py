@@ -48,6 +48,10 @@ class Transition(str, Enum):
     G_XX = "G_XX"
     XX_G = "XX_G"
 
+    # Phonon relaxation
+    X1_X2 = "X1_X2"
+    X2_X1 = "X2_X1"
+
 
 class TransitionPair(str, Enum):
     """

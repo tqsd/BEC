@@ -1,53 +1,57 @@
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Optional
 
-import numpy as np
-
-from smef.core.ir.ops import EmbeddedKron, LocalSymbolOp, OpExpr
+from smef.core.ir.ops import OpExpr
 from smef.core.ir.terms import Term, TermKind
 from smef.core.model.protocols import TermCatalogProto
-
 from smef.core.units import Q, hbar, magnitude
 
 from bec.quantum_dot.enums import Transition
 from bec.quantum_dot.smef.catalogs.base import FrozenCatalog
 from bec.quantum_dot.smef.modes import QDModes, QDModeKey
-
-
-def _qd_local(qd_index: int, symbol: str) -> OpExpr:
-    return OpExpr.atom(
-        EmbeddedKron(indices=(qd_index,), locals=(LocalSymbolOp(symbol),))
-    )
-
-
-def _proj_X1(qd_index: int) -> OpExpr:
-    return _qd_local(qd_index, "proj_X1")
-
-
-def _proj_X2(qd_index: int) -> OpExpr:
-    return _qd_local(qd_index, "proj_X2")
-
-
-def _t(qd_index: int, tr: Transition) -> OpExpr:
-    # qd4_named_ops registers "t_" + Transition.value as an alias
-    return _qd_local(qd_index, "t_" + str(tr.value))
-
-
-def _delta_prime_eV(qd) -> float:
-    mp = getattr(qd, "exciton_mixing_params", None)
-    if mp is None:
-        return 0.0
-    dp = getattr(mp, "delta_prime", 0.0)
-    try:
-        return float(magnitude(dp, "eV"))
-    except Exception:
-        return float(dp)
+from .base import _delta_prime_eV, _proj, _t
 
 
 @dataclass(frozen=True)
 class QDHamiltonianCatalog(FrozenCatalog):
+    r"""
+    Static Hamiltonian terms for the 4-level quantum dot in SMEF IR.
+
+    This catalog intentionally emits only *system* (drive-independent) terms.
+    Drive-dependent Hamiltonian contributions must be produced by the drive
+    pipeline (decoder/strength/emitter).
+
+    Emitted term(s)
+    ---------------
+    Exciton subspace FSS + mixing in the {X1, X2} basis, in a rotating/RWA frame
+    where only slow terms are kept:
+
+    .. math::
+
+        H_{X} =
+        \frac{\Delta}{2}\left(|X_1\rangle\langle X_1| - |X_2\rangle\langle X_2|\right)
+        + \delta' \left(|X_1\rangle\langle X_2| + |X_2\rangle\langle X_1|\right)
+
+    where:
+
+    - :math:`\Delta = E_{X1} - E_{X2}` comes from ``qd.energy`` (unitful eV).
+    - :math:`\delta'` comes from ``qd.mixing.delta_prime`` (unitful eV).
+
+    Unit boundary
+    -------------
+    Energies in eV are converted to angular frequencies (rad/s) and then to solver
+    units by multiplying with ``units.time_unit_s``. The IR stores dimensionless
+    solver-coefficients.
+
+    Operator conventions
+    --------------------
+    - ``proj_X1`` and ``proj_X2`` are projectors in the QD subsystem.
+    - Transition symbols follow: ``t_SRC_DST = |DST><SRC|``.
+      We form off-diagonal exciton operators via products:
+      ``|X1><X2| = t_G_X1 * t_X2_G`` and ``|X2><X1| = t_G_X2 * t_X1_G``.
+    """
+
     @classmethod
     def from_qd(
         cls,
@@ -59,58 +63,50 @@ class QDHamiltonianCatalog(FrozenCatalog):
         if units is None:
             raise ValueError("units must be provided")
 
-        # Dot subsystem index
         qd_i = 0 if modes is None else int(modes.index_of(QDModeKey.qd()))
-
-        # FSS: Delta = E(X1) - E(X2) in eV
-        E_X1_eV = float(magnitude(qd.energy.X1, "eV"))
-        E_X2_eV = float(magnitude(qd.energy.X2, "eV"))
-        Delta_eV = E_X1_eV - E_X2_eV
-
-        # Convert energies -> angular frequency (rad/s) -> solver units (multiply by time_unit_s)
         time_unit_s = float(units.time_unit_s)
 
-        Delta_J = Q(Delta_eV, "eV").to("J")
-        w_Delta_rad_s = float((Delta_J / hbar).to("rad/s").magnitude)
-        w_Delta_solver = w_Delta_rad_s * time_unit_s
+        # Delta = E(X1) - E(X2) (eV)
+        e_x1 = float(magnitude(qd.energy.X1, "eV"))
+        e_x2 = float(magnitude(qd.energy.X2, "eV"))
+        delta_eV = float(e_x1 - e_x2)
+        # delta_prime (eV)
+        dp_eV = float(_delta_prime_eV(qd))
 
-        dp_eV = _delta_prime_eV(qd)
+        # If both are zero, emit nothing (clean IR)
+        if abs(delta_eV) == 0.0 and abs(dp_eV) == 0.0:
+            return cls(_terms=tuple())
+
+        # Convert eV -> J -> (J/hbar) rad/s -> solver
+        delta_J = Q(delta_eV, "eV").to("J")
+        w_delta = float((delta_J / hbar).to("rad/s").magnitude) * time_unit_s
+
         dp_J = Q(dp_eV, "eV").to("J")
-        w_dp_rad_s = float((dp_J / hbar).to("rad/s").magnitude)
-        w_dp_solver = w_dp_rad_s * time_unit_s
+        w_dp = float((dp_J / hbar).to("rad/s").magnitude) * time_unit_s
 
-        # Operators in the QD subsystem
-        P1 = _proj_X1(qd_i)
-        P2 = _proj_X2(qd_i)
+        P1 = _proj(qd_i, "X1")
+        P2 = _proj(qd_i, "X2")
 
-        # Diagonal FSS part: (Delta/2)(P_X1 - P_X2)
+        # (Delta/2)(P1 - P2)
         H_fss = OpExpr.summation(
             [
-                OpExpr.scale(0.5 * complex(w_Delta_solver), P1),
-                OpExpr.scale(-0.5 * complex(w_Delta_solver), P2),
+                OpExpr.scale(complex(0.5 * w_delta), P1),
+                OpExpr.scale(complex(-0.5 * w_delta), P2),
             ]
         )
 
-        # Mixing part: dp (|X1><X2| + |X2><X1|)
-        #
-        # Using only existing transition symbols with your convention:
-        # t_SRC_DST = |DST><SRC|
-        #
-        # |X1><X2| = (|X1><G|)(|G><X2|) = t_G_X1 * t_X2_G
-        # |X2><X1| = (|X2><G|)(|G><X1|) = t_G_X2 * t_X1_G
-        ketbra_X1_X2 = OpExpr.product(
+        # delta_prime (|X1><X2| + |X2><X1|)
+        ketbra_x1_x2 = OpExpr.product(
             [_t(qd_i, Transition.G_X1), _t(qd_i, Transition.X2_G)]
         )
-        ketbra_X2_X1 = OpExpr.product(
+        ketbra_x2_x1 = OpExpr.product(
             [_t(qd_i, Transition.G_X2), _t(qd_i, Transition.X1_G)]
         )
-
         H_mix = OpExpr.scale(
-            complex(w_dp_solver),
-            OpExpr.summation([ketbra_X1_X2, ketbra_X2_X1]),
+            complex(w_dp),
+            OpExpr.summation([ketbra_x1_x2, ketbra_x2_x1]),
         )
 
-        # Total exciton Hamiltonian in rotating frame (slow terms only)
         H_total = OpExpr.summation([H_fss, H_mix])
 
         terms = (
@@ -120,11 +116,10 @@ class QDHamiltonianCatalog(FrozenCatalog):
                 coeff=None,
                 label="H_exciton_fss_mix",
                 meta={
-                    "Delta_eV": float(Delta_eV),
+                    "Delta_eV": float(delta_eV),
                     "delta_prime_eV": float(dp_eV),
                     "frame": "rotating_rwa",
                 },
             ),
         )
-
         return cls(_terms=terms)

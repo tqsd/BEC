@@ -92,7 +92,7 @@ def run_case(
         sigma=Q(25.0, "ps"),
         preferred_kind="2ph",
         label=label,
-        include_polaron=True,
+        compensate_polaron=True,
         omega0_rad_s=omega0,
         chirp_rate_rad_s2=None,
     )
