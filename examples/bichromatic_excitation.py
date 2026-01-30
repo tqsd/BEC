@@ -15,7 +15,7 @@ from bec.quantum_dot.smef.initial_state import rho0_qd_vacuum
 from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.dipole_params import DipoleParams
 
-from bec.reporting.plotting.api import plot_runs
+from bec.reporting.plotting.api import plot_run, plot_runs
 from bec.reporting.plotting.grid import PlotConfig
 
 
@@ -116,23 +116,22 @@ def main() -> None:
     metrics = QDDiagnostics().compute(qd, res, units=units)
     print(metrics.to_text())
 
-    figs = plot_runs(
-        [res],
+    fig = plot_run(
+        res,
         units=units,
-        drives=[None],  # or [drive_pump] if you only want to visualize one
-        qds=[qd],
+        drives=[drive_pump, drive_stokes],  # payloads, not DriveSpec
+        qd=qd,
         cfg=PlotConfig(
             title="Bichromatic ladder",
             ncols=1,
             column_titles=["bichromatic ladder"],
-            show_omega_L=False,  # since we didn't provide a single drive
-            show_coupling_panel=False,  # same reason
+            show_omega_L=False,
+            show_coupling_panel=False,
             sharex=True,
             sharey_by_row=True,
         ),
     )
-    for fig in figs:
-        fig.show()
+    fig.show()
     plt.show()
 
 
