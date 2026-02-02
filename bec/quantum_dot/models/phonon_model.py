@@ -110,6 +110,34 @@ class PolaronDriveRates:
         out[m] = alpha * (w[m] ** 3) * np.exp(-(x * x))
         return out
 
+    @staticmethod
+    def _coth(x: np.ndarray) -> np.ndarray:
+        """
+        Numerically stable coth(x) for x >= 0.
+
+        For small x, coth(x) ~ 1/x + x/3. We clamp to avoid divergence.
+        """
+        x = np.asarray(x, dtype=float)
+        out = np.empty_like(x)
+
+        # thresholds chosen for stability; adjust if you like
+        small = x < 1e-6
+        large = x > 50.0  # coth(x) -> 1 quickly
+
+        # small-x series
+        xs = x[small]
+        out[small] = (1.0 / np.maximum(xs, 1e-12)) + (xs / 3.0)
+
+        # large-x approx
+        out[large] = 1.0
+
+        # regular region
+        mid = (~small) & (~large)
+        xm = x[mid]
+        out[mid] = 1.0 / np.tanh(xm)
+
+        return out
+
     def gamma_eid_1_s(
         self,
         omega_solver: np.ndarray,
@@ -117,27 +145,67 @@ class PolaronDriveRates:
         *,
         time_unit_s: float,
         scale: float = 1.0,
+        w_floor_rad_s: float = 1.0e9,
     ) -> np.ndarray:
         """
-        Minimal physically-shaped EID:
-          gamma_eid(t) ~ |Omega(t)|^2 * J(|Delta(t)|)
-        where Omega is converted from solver units back to rad/s.
-        """
-        if not bool(self.enabled):
-            return np.zeros_like(np.asarray(detuning_rad_s, dtype=float))
+        Tier-B polaron-shaped EID (minimal):
 
-        omega_solver = np.asarray(omega_solver, dtype=complex)
-        det = np.asarray(detuning_rad_s, dtype=float)
+        gamma_eid(t) = scale * |Omega(t)|^2 * J(|Delta(t)|) * coth(hbar*|Delta|/(2*kB*T))
+
+        - Omega_solver is in solver units; convert back to rad/s via /time_unit_s.
+        - detuning_rad_s is physical rad/s.
+        - Returns gamma in 1/s as float array.
+
+        Notes:
+        - We clamp |Delta| from below by w_floor_rad_s to avoid coth divergence at 0.
+        - If T <= 0, we use coth -> 1 (zero-temperature limit).
+        """
+        det = np.asarray(detuning_rad_s, dtype=float).reshape(-1)
+
+        if not bool(self.enabled):
+            return np.zeros_like(det)
 
         s = float(time_unit_s)
         if s <= 0.0:
             raise ValueError("time_unit_s must be > 0")
 
-        omega_rad_s = omega_solver / s
-        om2 = (omega_rad_s.real**2) + (omega_rad_s.imag**2)
+        omega_solver = np.asarray(omega_solver, dtype=complex).reshape(-1)
+        if omega_solver.size != det.size:
+            raise ValueError(
+                "detuning_rad_s must have same length as omega_solver"
+            )
 
-        jw = self._j_of_w(np.abs(det))
-        return float(scale) * om2 * jw
+        # Omega in rad/s (physical)
+        omega_rad_s = omega_solver / s
+        om2 = (omega_rad_s.real * omega_rad_s.real) + (
+            omega_rad_s.imag * omega_rad_s.imag
+        )
+
+        # Use absolute detuning frequency with a floor to avoid coth divergence
+        w = np.abs(det)
+        w_eff = np.maximum(w, float(w_floor_rad_s))
+
+        # J(w) in SI using float-only spectral density (alpha in s^2, w in rad/s)
+        jw = self._j_of_w(w_eff)
+
+        # Thermal factor using Pint unitful constants from smef.core.units
+        T = float(self.temperature_K)
+        if T <= 0.0:
+            therm = np.ones_like(w_eff)
+        else:
+            # Build dimensionless x = hbar*w/(2*kB*T)
+            # _hbar has units J*s, w is rad/s, kB is J/K, T is K -> dimensionless.
+            w_q = Q(w_eff, "rad/s")
+            T_q = Q(T, "K")
+            x_q = (_hbar * w_q) / (2.0 * _kB * T_q)
+
+            # Convert to plain floats (dimensionless) for stable coth implementation
+            x = np.asarray(x_q.to_base_units().magnitude, dtype=float)
+
+            # coth(x) (stable)
+            therm = self._coth(x)
+
+        return float(scale) * om2 * jw * therm
 
 
 class PhononModelProto(Protocol):
