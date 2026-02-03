@@ -287,8 +287,8 @@ def main() -> None:
 
     arp_kwargs = {
         "chirp_kind": "tanh",
-        "tanh_delta_rad_s": 5.0e10,
-        "tanh_tau_ns": 0.02,
+        "tanh_delta_rad_s": 3.0e10,
+        "tanh_tau_ns": 0.03,
         "sigma_ns": 0.05,
     }
 
@@ -328,7 +328,7 @@ def main() -> None:
             label="arp",
             tlist=tlist,
             time_unit_s=time_unit_s,
-            amp_scale=1.0,
+            amp_scale=1.2,
             detuning_offset_rad_s=detuning_offset_rad_s,
             scheme_kwargs=arp_kwargs,
             audit=True,
