@@ -15,8 +15,11 @@ from smef.core.drives.types import (
     ResolvedDrive,
 )
 
-from bec.quantum_dot.enums import QDState, TransitionPair
+from bec.quantum_dot.enums import TransitionPair
 from bec.quantum_dot.smef.drives.context import QDDriveDecodeContext
+from bec.quantum_dot.smef.drives.emitter.detuning_term import (
+    build_detuning_h_term,
+)
 from bec.quantum_dot.smef.drives.emitter.drive_term import build_drive_h_term
 from bec.quantum_dot.smef.drives.emitter.eid_terms import (
     build_eid_c_term_phenom,
@@ -26,11 +29,6 @@ from bec.quantum_dot.smef.drives.emitter.sampling import (
     payload_from_ctx,
     sample_omega_L_rad_s,
 )
-from bec.quantum_dot.smef.drives.emitter.frame_solver import (
-    FrameConstraint,
-    solve_state_energies_ls,
-)
-from bec.quantum_dot.smef.drives.emitter.frame_terms import build_frame_h_terms
 
 
 def _eid_scale_from_derived(derived: Any) -> float:
@@ -42,6 +40,10 @@ def _eid_scale_from_derived(derived: Any) -> float:
 
 
 def _polaron_rates_from_derived(derived: Any) -> Any:
+    """
+    Returns derived.phonon_outputs.polaron_rates if present, else None.
+    Kept permissive so derived implementations can evolve without breaking.
+    """
     po = getattr(derived, "phonon_outputs", None)
     if po is None:
         return None
@@ -51,10 +53,14 @@ def _polaron_rates_from_derived(derived: Any) -> Any:
 @dataclass
 class QDDriveTermEmitter(DriveTermEmitterProto):
     """
-    Emits:
-      - H_drive per resolved (drive_id, pair)
-      - H_frame (rotating frame diagonal) once per emit call, constructed from all detuning constraints
-      - L_eid per resolved (drive_id, pair) (edge-based), unchanged
+    Glue emitter that assembles terms using the small builder modules.
+
+    Emits (per ResolvedDrive / TransitionPair):
+      - H_drive always
+      - H_det optionally (if payload.omega_L_rad_s(t) exists)
+      - L_eid optionally:
+          * prefer polaron-shaped EID if detuning exists and polaron_rates enabled
+          * else fall back to phenomenological EID if eid_scale > 0
     """
 
     qd_index: int = 0  # fixed by QDModes layout
@@ -93,8 +99,6 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
         h_terms: list[Any] = []
         c_terms: list[Any] = []
 
-        frame_constraints: list[FrameConstraint] = []
-
         for rd in resolved:
             pair = rd.transition_key
             if not isinstance(pair, TransitionPair):
@@ -121,7 +125,7 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
                     % (tlist_solver.size, omega_solver.size)
                 )
 
-            # 1) coherent drive term (unchanged)
+            # 1) coherent drive term
             h_terms.append(
                 build_drive_h_term(
                     qd_index=qd_index,
@@ -134,8 +138,7 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
                 )
             )
 
-            # 2) detuning: DO NOT emit per-edge Hamiltonian.
-            # Instead collect constraint eps_dst - eps_src = -Delta_edge(t)
+            # 2) optional detuning term
             detuning_rad_s = None
             payload = payload_from_ctx(rd.drive_id, decode_ctx)
             omega_L = sample_omega_L_rad_s(payload, t_phys_s)
@@ -151,27 +154,24 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
 
                 detuning_rad_s = (mult * omega_L) - omega_ref_f
 
-                frame_constraints.append(
-                    FrameConstraint(
+                h_terms.append(
+                    build_detuning_h_term(
+                        qd_index=qd_index,
+                        drive_id=rd.drive_id,
+                        pair=pair,
                         src=src,
                         dst=dst,
-                        rhs_rad_s=(-1.0)
-                        * np.asarray(detuning_rad_s, dtype=float).reshape(-1),
+                        detuning_rad_s=detuning_rad_s,
+                        time_unit_s=s,
                         meta={
                             **dict(rd.meta),
-                            "drive_id": rd.drive_id,
-                            "pair": (
-                                pair.value
-                                if hasattr(pair, "value")
-                                else str(pair)
-                            ),
-                            "omega_ref_rad_s": float(omega_ref_f),
+                            "omega_ref_rad_s": omega_ref_f,
                             "detuning_mult": float(mult),
                         },
                     )
                 )
 
-            # 3) EID collapse (unchanged)
+            # 3) optional EID collapse (prefer polaron-shaped if possible)
             eid_term = None
 
             if detuning_rad_s is not None:
@@ -201,27 +201,5 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
 
             if eid_term is not None:
                 c_terms.append(eid_term)
-
-        # After collecting all constraints, emit ONE consistent rotating-frame diagonal Hamiltonian.
-        if frame_constraints:
-            states = (QDState.G, QDState.X1, QDState.X2, QDState.XX)
-            eps_by_state = solve_state_energies_ls(
-                states=states,
-                constraints=frame_constraints,
-                gauge_state=QDState.G,
-            )
-
-            h_terms.extend(
-                build_frame_h_terms(
-                    qd_index=qd_index,
-                    eps_rad_s_by_state=eps_by_state,
-                    time_unit_s=s,
-                    label_prefix="H_frame",
-                    meta={
-                        "source": "rotating_frame",
-                        "n_constraints": len(frame_constraints),
-                    },
-                )
-            )
 
         return DriveTermBundle(h_terms=tuple(h_terms), c_terms=tuple(c_terms))

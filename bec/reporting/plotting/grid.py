@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence, List, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,13 +9,13 @@ from matplotlib.axes import Axes
 
 from .labels import ax_label
 from .panels import (
-    draw_coupling_panel,
     draw_drive_panel,
     draw_outputs_panel,
     draw_pops_panel,
 )
 from .styles import PlotStyle, apply_style, default_style
 from .traces import QDTraces
+from .twin_registry import clear_twin_axes, iter_axes_for_legend
 
 
 _TIME_SCALE = {
@@ -29,7 +29,6 @@ _TIME_SCALE = {
 
 
 def _choose_time_unit(max_s: float) -> str:
-    # Pick a display unit so axis numbers are O(1..1e3-ish).
     for u in ("s", "ms", "us", "ns", "ps", "fs"):
         if max_s / _TIME_SCALE[u] >= 1.0:
             return u
@@ -43,24 +42,44 @@ def _as_1d_float(x) -> np.ndarray:
 def _time_convert(t_s: np.ndarray, time_display: str) -> Tuple[np.ndarray, str]:
     t_s = _as_1d_float(t_s)
     tmax = float(np.nanmax(t_s)) if t_s.size else 1.0
-
     if time_display == "auto":
         tu = _choose_time_unit(tmax)
     else:
         tu = str(time_display)
-
     scale = float(_TIME_SCALE.get(tu, 1.0))
     t = t_s / scale
     return t, tu
 
 
-def _available_panels(tr: QDTraces, cfg: "PlotConfig") -> List[str]:
+@dataclass
+class PlotConfig:
+    time_display: str = "auto"
+    title: str = "QD run"
+
+    show_drive_panel: bool = True
+    show_pops_panel: bool = True
+    show_outputs_panel: bool = True
+
+    # Multi-column layout
+    ncols: int = 1
+    sharex: bool = True
+    sharey_by_row: bool = True
+    column_titles: Optional[Sequence[str]] = None
+
+    # Legend behavior
+    legend: bool = True
+    legend_max_items: int = 80
+
+    # Fixed gutter on the right for the legend (fraction of figure width)
+    legend_gutter: float = 0.22
+
+
+def _available_panels(tr: QDTraces, cfg: PlotConfig) -> List[str]:
     panels: List[str] = []
 
     have_drive = bool(getattr(tr, "drives", None))
     have_pops = bool(getattr(tr, "pops", None))
     have_out = bool(getattr(tr, "outputs", None))
-    have_cpl = bool(getattr(tr, "coherences", None))
 
     if cfg.show_drive_panel and have_drive:
         panels.append("drive")
@@ -68,8 +87,6 @@ def _available_panels(tr: QDTraces, cfg: "PlotConfig") -> List[str]:
         panels.append("pops")
     if cfg.show_outputs_panel and have_out:
         panels.append("out")
-    if cfg.show_coupling_panel and have_cpl:
-        panels.append("coupling")
 
     return panels
 
@@ -81,34 +98,22 @@ def _draw_panel(
     t: np.ndarray,
     tu: str,
     tr: QDTraces,
-    cfg: "PlotConfig",
     style: PlotStyle,
-    title: Optional[str] = None,
+    show_right_axis: bool,
 ) -> None:
     if name == "drive":
-        draw_drive_panel(ax, t=t, drives=tr.drives, style=style)
-        if title:
-            ax.set_title(title)
-    elif name == "pops":
-        draw_pops_panel(ax, t=t, pops=tr.pops, style=style)
-    elif name == "out":
-        draw_outputs_panel(ax, t=t, outputs=tr.outputs, style=style)
-    elif name == "coupling":
-        draw_coupling_panel(
-            ax,
-            t=t,
-            coherences=tr.coherences,
-            drives=tr.drives,
-            style=style,
-            mode=cfg.coupling_mode,
+        draw_drive_panel(
+            ax, t=t, tr=tr, style=style, show_right_axis=show_right_axis
         )
+    elif name == "pops":
+        draw_pops_panel(ax, t=t, tr=tr, style=style)
+    elif name == "out":
+        draw_outputs_panel(ax, t=t, tr=tr, style=style)
     else:
-        raise ValueError(f"Unknown panel name: {name}")
+        raise ValueError("Unknown panel name: %s" % name)
 
 
 def _sharey_by_row(axes_grid: Sequence[Sequence[Axes]]) -> None:
-    # Make each row share y-limits across columns (left axes only).
-    # If some panel creates twinx internally, this still keeps the main y consistent.
     nrows = len(axes_grid)
     if nrows == 0:
         return
@@ -133,25 +138,115 @@ def _sharey_by_row(axes_grid: Sequence[Sequence[Axes]]) -> None:
             axes_grid[r][c].set_ylim(y0, y1)
 
 
-@dataclass
-class PlotConfig:
-    time_display: str = "auto"
-    title: str = "QD run"
+def _collect_legend_items(axes: Sequence[Axes], cfg: PlotConfig):
+    """
+    Collect legend items grouped by artist gid.
 
-    show_drive_panel: bool = True
-    show_pops_panel: bool = True
-    show_outputs_panel: bool = True
-    show_coupling_panel: bool = True
+    Expected gids (from panels.py):
+      legend:drives
+      legend:chirp
+      legend:pops
+      legend:outputs
+    """
+    if not cfg.legend:
+        return None
 
-    # kept for compatibility (drive extraction can use this)
-    show_omega_L: bool = True
-    coupling_mode: str = "abs"  # "abs" or "reim"
+    groups = {
+        "drives": [],
+        "chirp": [],
+        "pops": [],
+        "outputs": [],
+    }
 
-    # Multi-column layout
-    ncols: int = 1
-    sharex: bool = True
-    sharey_by_row: bool = True
-    column_titles: Optional[Sequence[str]] = None
+    seen = set()
+
+    for ax in axes:
+        for a in iter_axes_for_legend(ax):
+            handles, labels = a.get_legend_handles_labels()
+            for h, lab in zip(handles, labels):
+                lab = str(lab).strip()
+                if not lab or lab.startswith("_"):
+                    continue
+                if lab in seen:
+                    continue
+
+                gid = getattr(h, "get_gid", lambda: None)()
+                if isinstance(gid, str) and gid.startswith("legend:"):
+                    group = gid.split("legend:", 1)[1]
+                else:
+                    group = None
+
+                if group in groups:
+                    groups[group].append((h, lab))
+                    seen.add(lab)
+
+    groups = {k: v for k, v in groups.items() if v}
+    if not groups:
+        return None
+
+    return groups
+
+
+def _add_legend_gutter(
+    fig: plt.Figure, style: PlotStyle, cfg: PlotConfig, legend_groups
+) -> None:
+    if legend_groups is None:
+        return
+
+    gutter = float(cfg.legend_gutter)
+    gutter = max(0.10, min(0.40, gutter))
+
+    left = 1.0 - gutter + 0.02
+    width = gutter - 0.03
+
+    ax_leg = fig.add_axes([left, 0.08, width, 0.84])
+    ax_leg.axis("off")
+
+    handles: List[object] = []
+    labels: List[str] = []
+
+    def header(text: str):
+        h = plt.Line2D([], [], linestyle="none")
+        handles.append(h)
+        labels.append(text)
+
+    def spacer():
+        h = plt.Line2D([], [], linestyle="none")
+        handles.append(h)
+        labels.append("")
+
+    order = [
+        ("drives", "Drives"),
+        ("chirp", "Chirp"),
+        ("pops", "QD populations"),
+        ("outputs", "Output expectations"),
+    ]
+
+    for key, title in order:
+        items = legend_groups.get(key)
+        if not items:
+            continue
+
+        header(r"\textbf{%s}" % title)
+        for h, lab in items:
+            handles.append(h)
+            labels.append(lab)
+        spacer()
+
+    leg = ax_leg.legend(
+        handles,
+        labels,
+        loc="center left",
+        frameon=False,
+        handlelength=2.2,
+        handletextpad=0.8,
+        borderpad=0.0,
+        labelspacing=0.6,
+    )
+
+    for text in leg.get_texts():
+        if text.get_text().startswith(r"\textbf"):
+            text.set_fontsize(text.get_fontsize() * 1.05)
 
 
 def plot_qd_run(
@@ -166,7 +261,7 @@ def plot_qd_run(
 
     panels = _available_panels(tr, cfg)
     if not panels:
-        raise ValueError("Nothing to plot (no panels selected / no data).")
+        raise ValueError("Nothing to plot.")
 
     t, tu = _time_convert(tr.t_s, cfg.time_display)
 
@@ -175,18 +270,40 @@ def plot_qd_run(
         1,
         sharex=True,
         figsize=style.figsize,
-        constrained_layout=True,
+        constrained_layout=False,
     )
     if len(panels) == 1:
         axes = [axes]
 
-    for i, (ax, name) in enumerate(zip(axes, panels)):
-        title = cfg.title if (i == 0 and cfg.title) else None
+    for ax in axes:
+        clear_twin_axes(ax)
+
+    for ax, name in zip(axes, panels):
         _draw_panel(
-            ax, name, t=t, tu=tu, tr=tr, cfg=cfg, style=style, title=title
+            ax,
+            name,
+            t=t,
+            tu=tu,
+            tr=tr,
+            style=style,
+            show_right_axis=True,
         )
 
+    if cfg.title:
+        fig.suptitle(cfg.title)
+
     axes[-1].set_xlabel(ax_label("Time", "t", tu))
+
+    legend_items = _collect_legend_items(axes, cfg)
+
+    rect_right = (
+        1.0 - float(cfg.legend_gutter)
+        if (cfg.legend and legend_items is not None)
+        else 1.0
+    )
+    fig.tight_layout(rect=(0.0, 0.0, rect_right, 1.0))
+
+    _add_legend_gutter(fig, style, cfg, legend_items)
     return fig
 
 
@@ -211,29 +328,20 @@ def plot_qd_runs_grid(
     for start in range(0, len(traces), ncols):
         chunk = list(traces[start : start + ncols])
 
-        # Decide panels for this figure:
-        # Use the union of available panels across the chunk, but keep a stable order.
-        panel_order = ["drive", "pops", "out", "coupling"]
+        panel_order = ["drive", "pops", "out"]
         present = set()
         for tr in chunk:
             present.update(_available_panels(tr, cfg))
         panels = [p for p in panel_order if p in present]
         if not panels:
-            raise ValueError("Nothing to plot (no panels selected / no data).")
+            raise ValueError("Nothing to plot.")
 
-        # Choose a single time unit for the whole chunk so sharex makes sense
         all_t_s = (
-            np.concatenate(
-                [
-                    _as_1d_float(tr.t_s)
-                    for tr in chunk
-                    if len(_as_1d_float(tr.t_s)) > 0
-                ]
-            )
+            np.concatenate([_as_1d_float(tr.t_s) for tr in chunk])
             if chunk
             else np.array([0.0])
         )
-        t_dummy, tu = _time_convert(all_t_s, cfg.time_display)
+        _t_dummy, tu = _time_convert(all_t_s, cfg.time_display)
         scale = float(_TIME_SCALE.get(tu, 1.0))
 
         nrows = len(panels)
@@ -244,11 +352,10 @@ def plot_qd_runs_grid(
             this_cols,
             sharex=bool(cfg.sharex),
             sharey=False,
-            figsize=(style.figsize[0] * this_cols, style.figsize[1]),
-            constrained_layout=True,
+            figsize=(style.figsize[0], style.figsize[1]),
+            constrained_layout=False,
         )
 
-        # Normalize axes to a 2D list [row][col]
         if nrows == 1 and this_cols == 1:
             axes_grid: List[List[Axes]] = [[axes]]
         elif nrows == 1:
@@ -261,35 +368,62 @@ def plot_qd_runs_grid(
         if cfg.title:
             fig.suptitle(cfg.title)
 
+        flat_axes: List[Axes] = []
+        for row in axes_grid:
+            for ax in row:
+                clear_twin_axes(ax)
+                flat_axes.append(ax)
+
         for col, tr in enumerate(chunk):
             t = _as_1d_float(tr.t_s) / scale
-
-            col_title = None
-            if cfg.column_titles and (start + col) < len(cfg.column_titles):
-                col_title = cfg.column_titles[start + col]
+            is_last_col = col == this_cols - 1
 
             for row, name in enumerate(panels):
                 ax = axes_grid[row][col]
-                title = col_title if (row == 0 and col_title) else None
                 _draw_panel(
                     ax,
                     name,
                     t=t,
                     tu=tu,
                     tr=tr,
-                    cfg=cfg,
                     style=style,
-                    title=title,
+                    show_right_axis=is_last_col,
                 )
 
-        # x-label only on bottom row
+        if cfg.column_titles:
+            for col in range(this_cols):
+                idx = start + col
+                if idx < len(cfg.column_titles):
+                    title = cfg.column_titles[idx]
+                    if title:
+                        axes_grid[0][col].set_title(str(title))
+
+        for row in range(nrows):
+            for col in range(1, this_cols):
+                ax = axes_grid[row][col]
+                ax.set_ylabel("")
+                ax.tick_params(labelleft=False)
+
+        for row in range(nrows - 1):
+            for col in range(this_cols):
+                axes_grid[row][col].tick_params(labelbottom=False)
+
         for col in range(this_cols):
             axes_grid[-1][col].set_xlabel(ax_label("Time", "t", tu))
 
-        # Optional y-sharing per row across columns
         if cfg.sharey_by_row and this_cols > 1:
             _sharey_by_row(axes_grid)
 
+        legend_items = _collect_legend_items(flat_axes, cfg)
+
+        rect_right = (
+            1.0 - float(cfg.legend_gutter)
+            if (cfg.legend and legend_items is not None)
+            else 1.0
+        )
+        fig.tight_layout(rect=(0.0, 0.0, rect_right, 1.0))
+
+        _add_legend_gutter(fig, style, cfg, legend_items)
         figs.append(fig)
 
     return figs
