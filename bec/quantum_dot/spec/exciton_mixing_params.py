@@ -21,7 +21,7 @@ class ExcitonMixingParams:
     delta_prime: QuantityLike = as_eV(0.0)
 
     @classmethod
-    def from_values(cls, *, delta_prime_eV: Any = 0.0) -> "ExcitonMixingParams":
+    def from_values(cls, *, delta_prime_eV: Any = 0.0) -> ExcitonMixingParams:
         obj = cls(delta_prime=as_eV(delta_prime_eV))
         obj.validate()
         return obj

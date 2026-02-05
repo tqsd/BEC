@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class DerivedQDBase:
-    qd: "QuantumDot"
+    qd: QuantumDot
 
     @cached_property
     def t_registry(self):

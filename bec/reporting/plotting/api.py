@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 from .extract import extract_qd_traces
 from .grid import PlotConfig, plot_qd_run, plot_qd_runs_grid
@@ -12,11 +13,11 @@ def plot_run(
     res: Any,
     *,
     units: Any,
-    drives: Sequence[Optional[Any]] = [],
-    qd: Optional[Any] = None,
-    window_s: Optional[Tuple[float, float]] = None,
-    cfg: Optional[PlotConfig] = None,
-    style: Optional[PlotStyle] = None,
+    drives: Sequence[Any | None] = [],
+    qd: Any | None = None,
+    window_s: tuple[float, float] | None = None,
+    cfg: PlotConfig | None = None,
+    style: PlotStyle | None = None,
 ):
     tr = extract_qd_traces(
         res, units=units, drives=drives, qd=qd, window_s=window_s
@@ -28,12 +29,12 @@ def plot_runs(
     results: Sequence[Any],
     *,
     units: Any,
-    drives_list: Optional[Sequence[Optional[Sequence[Optional[Any]]]]] = None,
-    qds: Optional[Sequence[Optional[Any]]] = None,
-    windows_s: Optional[Sequence[Optional[Tuple[float, float]]]] = None,
-    cfg: Optional[PlotConfig] = None,
-    style: Optional[PlotStyle] = None,
-) -> List[Any]:
+    drives_list: Sequence[Sequence[Any | None] | None] | None = None,
+    qds: Sequence[Any | None] | None = None,
+    windows_s: Sequence[tuple[float, float] | None] | None = None,
+    cfg: PlotConfig | None = None,
+    style: PlotStyle | None = None,
+) -> list[Any]:
     n = len(results)
     if n == 0:
         raise ValueError("results must be non-empty")
@@ -48,7 +49,7 @@ def plot_runs(
     if len(drives_list) != n:
         raise ValueError("drives_list length must match results length")
 
-    traces: List[QDTraces] = []
+    traces: list[QDTraces] = []
     for res, drives, qd, window_s in zip(results, drives_list, qds, windows_s):
         tr = extract_qd_traces(
             res, units=units, drives=drives, qd=qd, window_s=window_s

@@ -7,14 +7,14 @@ from smef.engine import UnitSystem
 
 from bec.quantum_dot.dot import QuantumDot
 from bec.quantum_dot.enums import RateKey
-from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.dipole_params import DipoleParams
+from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.phonon_params import (
-    PhononParams,
-    PhononModelKind,
     PhenomenologicalPhononParams,
-    PolaronLAParams,
     PhononCouplings,
+    PhononModelKind,
+    PhononParams,
+    PolaronLAParams,
     SpectralDensityKind,
 )
 

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from smef.core.units import QuantityLike, Q, as_quantity, magnitude, magnitudes
 from typing import Any
+
+from smef.core.units import QuantityLike, as_quantity
 
 
 def as_dimless(x: Any) -> float:

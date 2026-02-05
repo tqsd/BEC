@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional
 
 import numpy as np
 from scipy.integrate import quad
+from smef.core.units import (
+    Q,
+    QuantityLike,
+    as_quantity,
+)
+from smef.core.units import (
+    hbar as _hbar,
+)
+from smef.core.units import (
+    kB as _kB,
+)
 
 from bec.quantum_dot.enums import QDState, RateKey, Transition, TransitionPair
 from bec.quantum_dot.spec.exciton_mixing_params import ExcitonMixingParams
@@ -12,13 +22,6 @@ from bec.quantum_dot.spec.phonon_params import PhononModelType, PhononParams
 from bec.quantum_dot.transitions import (
     DEFAULT_TRANSITION_REGISTRY,
     TransitionRegistry,
-)
-from smef.core.units import (
-    Q,
-    QuantityLike,
-    as_quantity,
-    hbar as _hbar,
-    kB as _kB,
 )
 
 
@@ -43,10 +46,10 @@ class PolaronEIDConfig:
 
 @dataclass(frozen=True)
 class PhononOutputs:
-    B_polaron_per_transition: Dict[Transition, float] = field(
+    B_polaron_per_transition: dict[Transition, float] = field(
         default_factory=dict
     )
-    rates: Dict[RateKey, QuantityLike] = field(default_factory=dict)
+    rates: dict[RateKey, QuantityLike] = field(default_factory=dict)
     polaron_eid: PolaronEIDConfig = PolaronEIDConfig()
 
 
@@ -64,14 +67,14 @@ class PhononModel:
     def __init__(
         self,
         *,
-        phonon_params: Optional[PhononParams] = None,
-        exciton_splitting: Optional[ExcitonMixingParams] = None,
+        phonon_params: PhononParams | None = None,
+        exciton_splitting: ExcitonMixingParams | None = None,
         transitions: TransitionRegistry = DEFAULT_TRANSITION_REGISTRY,
     ):
         self._EM = exciton_splitting
         self._P = phonon_params
         self._tr = transitions
-        self._cache: Dict[str, float] = {}
+        self._cache: dict[str, float] = {}
 
     # ---------------- polaron dressing ----------------
 
@@ -99,7 +102,7 @@ class PhononModel:
         if alpha <= 0.0 or wc <= 0.0:
             return 1.0
 
-        key = "B:{:.6e}:{:.6e}:{:.6e}:{:.6e}".format(alpha, wc, T, float(s2))
+        key = f"B:{alpha:.6e}:{wc:.6e}:{T:.6e}:{float(s2):.6e}"
         cached = self._cache.get(key)
         if cached is not None:
             return cached
@@ -144,9 +147,7 @@ class PhononModel:
 
         if not np.isfinite(B):
             raise RuntimeError(
-                "polaron_B produced non-finite value (exponent={})".format(
-                    exponent
-                )
+                f"polaron_B produced non-finite value (exponent={exponent})"
             )
 
         # Clamp to [0, 1] for numerical safety
@@ -212,12 +213,12 @@ class PhononModel:
 
     # ---------------- helpers for phenomenological rates ----------------
 
-    def _phenomenological_rates(self) -> Dict[RateKey, QuantityLike]:
+    def _phenomenological_rates(self) -> dict[RateKey, QuantityLike]:
         P = self._P
         if P is None:
             return {}
 
-        out: Dict[RateKey, QuantityLike] = {}
+        out: dict[RateKey, QuantityLike] = {}
 
         g_xp = float(P.phenomenological.gamma_phi_Xp_1_s)
         g_xm = float(P.phenomenological.gamma_phi_Xm_1_s)
@@ -265,7 +266,7 @@ class PhononModel:
             )
 
         # ---- POLARON path ----
-        Bmap: Dict[Transition, float] = {}
+        Bmap: dict[Transition, float] = {}
         if P.polaron.enable_polaron_renorm:
             for tp in (
                 TransitionPair.G_X1,

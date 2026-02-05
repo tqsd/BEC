@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict
 import math
+from dataclasses import dataclass, field
+from typing import Any
 
-from smef.core.units import QuantityLike, Q, as_quantity, magnitude
+from smef.core.units import Q, QuantityLike, as_quantity, magnitude
 
 from .base import SerializableEnvelopeU
 
@@ -66,7 +66,7 @@ class GaussianEnvelopeU(SerializableEnvelopeU):
         return self._sig_s * math.sqrt(2.0 * math.pi)
 
     @classmethod
-    def from_fwhm(cls, t0: Any, fwhm: Any) -> "GaussianEnvelopeU":
+    def from_fwhm(cls, t0: Any, fwhm: Any) -> GaussianEnvelopeU:
         t0_q = _as_time_quantity(t0, "s")
         fwhm_q = _as_time_quantity(fwhm, "s")
         fwhm_s = float(fwhm_q.magnitude)
@@ -76,7 +76,7 @@ class GaussianEnvelopeU(SerializableEnvelopeU):
         sigma_s = fwhm_s / (2.0 * math.sqrt(2.0 * math.log(2.0)))
         return cls(t0=t0_q, sigma=Q(sigma_s, "s"))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "gaussian",
             "t0": {"value": _mag(self.t0, "s"), "unit": "s"},
@@ -84,7 +84,7 @@ class GaussianEnvelopeU(SerializableEnvelopeU):
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "GaussianEnvelopeU":
+    def from_dict(cls, data: dict[str, Any]) -> GaussianEnvelopeU:
         t0_d = data["t0"]
         sig_d = data["sigma"]
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any
 
 import numpy as np
-
 from smef.core.drives.protocols import (
     DriveDecodeContextProto,
     DriveTermEmitterProto,
@@ -22,15 +22,18 @@ from bec.quantum_dot.smef.drives.emitter.eid_terms import (
     build_eid_c_term_phenom,
     build_eid_c_term_polaron,
 )
-from bec.quantum_dot.smef.drives.emitter.sampling import (
-    payload_from_ctx,
-    sample_omega_L_rad_s,
-)
 from bec.quantum_dot.smef.drives.emitter.frame_solver import (
     FrameConstraint,
     solve_state_energies_ls,
 )
 from bec.quantum_dot.smef.drives.emitter.frame_terms import build_frame_h_terms
+from bec.quantum_dot.smef.drives.emitter.polaron_scattering_terms import (
+    build_polaron_scattering_c_terms,
+)
+from bec.quantum_dot.smef.drives.emitter.sampling import (
+    payload_from_ctx,
+    sample_omega_L_rad_s,
+)
 
 
 def _eid_scale_from_derived(derived: Any) -> float:
@@ -64,7 +67,7 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
         resolved: Sequence[ResolvedDrive],
         coeffs: DriveCoefficients,
         *,
-        decode_ctx: Optional[DriveDecodeContextProto] = None,
+        decode_ctx: DriveDecodeContextProto | None = None,
     ) -> DriveTermBundle:
         if not isinstance(decode_ctx, QDDriveDecodeContext):
             raise TypeError("QDDriveTermEmitter expects QDDriveDecodeContext")
@@ -87,7 +90,9 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
 
         t_phys_s = s * tlist_solver
 
-        eid_scale = _eid_scale_from_derived(derived)
+        # eid_scale = _eid_scale_from_derived(derived)
+        eid_scale = float(getattr(derived, "eid_calibration", 1.0))
+        eid_enabled = bool(getattr(derived, "eid_enabled", False))
         polaron_rates = _polaron_rates_from_derived(derived)
 
         h_terms: list[Any] = []
@@ -171,15 +176,34 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
                     )
                 )
 
-            # 3) EID collapse (unchanged)
-            eid_term = None
+            # Only emit EID if explicitly enabled
 
-            if detuning_rad_s is not None:
+            print("eid_enabled attr:", getattr(derived, "eid_enabled", None))
+            print("has phonon_outputs:", hasattr(derived, "phonon_outputs"))
+            print("DETUNING RAD S", detuning_rad_s)
+            print("DETUNIGN SCALE", eid_scale)
+            if hasattr(derived, "phonon_outputs"):
+                po = derived.phonon_outputs
+                print(
+                    "po.eid.enabled:",
+                    getattr(getattr(po, "eid", None), "enabled", None),
+                )
+                print(
+                    "po.polaron_rates is None:",
+                    getattr(po, "polaron_rates", None) is None,
+                )
+            if (
+                eid_enabled
+                and (detuning_rad_s is not None)
+                and (eid_scale > 0.0)
+            ):
+                print("ADDING EID C TERM POLARON")
                 eid_term = build_eid_c_term_polaron(
                     qd_index=qd_index,
                     drive_id=rd.drive_id,
                     pair=pair,
                     dst_proj_state=dst,
+                    src_proj_state=src,
                     omega_solver=omega_solver,
                     detuning_rad_s=detuning_rad_s,
                     time_unit_s=s,
@@ -188,19 +212,40 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
                     meta=dict(rd.meta),
                 )
 
-            if eid_term is None:
-                eid_term = build_eid_c_term_phenom(
+                # optional fallback: only when enabled
+                if eid_term is None:
+                    eid_term = build_eid_c_term_phenom(
+                        qd_index=qd_index,
+                        drive_id=rd.drive_id,
+                        pair=pair,
+                        src_proj_state=src,
+                        dst_proj_state=dst,
+                        omega_solver=omega_solver,
+                        eid_scale=eid_scale,
+                        meta=dict(rd.meta),
+                    )
+
+                if eid_term is not None:
+                    c_terms.append(eid_term)
+                    eid_term = None
+
+            if detuning_rad_s is not None:
+                sc_terms = build_polaron_scattering_c_terms(
                     qd_index=qd_index,
                     drive_id=rd.drive_id,
                     pair=pair,
-                    dst_proj_state=dst,
+                    dst_state=dst,
+                    src_state=src,
                     omega_solver=omega_solver,
-                    eid_scale=eid_scale,
+                    detuning_rad_s=detuning_rad_s,
+                    time_unit_s=s,
+                    polaron_rates=polaron_rates,
+                    scale=eid_scale,  # consider a separate knob later
                     meta=dict(rd.meta),
+                    b_polaron=1.0,  # IMPORTANT: omega already contains B
+                    Nt=4096,
                 )
-
-            if eid_term is not None:
-                c_terms.append(eid_term)
+                c_terms.extend(sc_terms)
 
         # After collecting all constraints, emit ONE consistent rotating-frame diagonal Hamiltonian.
         if frame_constraints:

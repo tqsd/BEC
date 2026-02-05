@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import numpy as np
-
 
 HV_BASIS = "HV"
 
@@ -40,7 +39,7 @@ class JonesState:
     Stored as two complex amplitudes (E_H, E_V).
     """
 
-    jones: Tuple[complex, complex] = (1.0 + 0j, 0.0 + 0j)
+    jones: tuple[complex, complex] = (1.0 + 0j, 0.0 + 0j)
     normalize: bool = True
     basis: str = HV_BASIS  # fixed, validated
 
@@ -60,7 +59,7 @@ class JonesState:
                 v = v / n
         return v
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "jones_state",
             "basis": HV_BASIS,
@@ -69,7 +68,7 @@ class JonesState:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "JonesState":
+    def from_dict(cls, data: dict[str, Any]) -> JonesState:
         _require_hv(data.get("basis", HV_BASIS))
         j = data["jones"]
         return cls(
@@ -79,28 +78,28 @@ class JonesState:
         )
 
     @classmethod
-    def H(cls) -> "JonesState":
+    def H(cls) -> JonesState:
         return cls(jones=(1.0 + 0j, 0.0 + 0j))
 
     @classmethod
-    def V(cls) -> "JonesState":
+    def V(cls) -> JonesState:
         return cls(jones=(0.0 + 0j, 1.0 + 0j))
 
     @classmethod
-    def D(cls) -> "JonesState":
+    def D(cls) -> JonesState:
         return cls(jones=(1.0 + 0j, 1.0 + 0j))
 
     @classmethod
-    def A(cls) -> "JonesState":
+    def A(cls) -> JonesState:
         return cls(jones=(1.0 + 0j, -1.0 + 0j))
 
     @classmethod
-    def R(cls) -> "JonesState":
+    def R(cls) -> JonesState:
         s = 1.0 / np.sqrt(2.0)
         return cls(jones=(s + 0j, -1j * s))
 
     @classmethod
-    def L(cls) -> "JonesState":
+    def L(cls) -> JonesState:
         s = 1.0 / np.sqrt(2.0)
         return cls(jones=(s + 0j, 1j * s))
 
@@ -129,7 +128,7 @@ class JonesMatrix:
             raise ValueError("Jones basis mismatch")
         return self.J @ state.as_array()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         J = self.J
         return {
             "type": "jones_matrix",
@@ -141,7 +140,7 @@ class JonesMatrix:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "JonesMatrix":
+    def from_dict(cls, data: dict[str, Any]) -> JonesMatrix:
         _require_hv(data.get("basis", HV_BASIS))
         Jraw = data["J"]
         J = np.array(
@@ -154,11 +153,11 @@ class JonesMatrix:
         return cls(J=J, basis=HV_BASIS)
 
     @classmethod
-    def identity(cls) -> "JonesMatrix":
+    def identity(cls) -> JonesMatrix:
         return cls(J=np.eye(2, dtype=np.complex128))
 
     @classmethod
-    def rotation(cls, theta_rad: float) -> "JonesMatrix":
+    def rotation(cls, theta_rad: float) -> JonesMatrix:
         c = float(np.cos(theta_rad))
         s = float(np.sin(theta_rad))
         J = np.array([[c, -s], [s, c]], dtype=np.complex128)
@@ -167,7 +166,7 @@ class JonesMatrix:
     @classmethod
     def retarder(
         cls, delta_rad: float, theta_rad: float = 0.0
-    ) -> "JonesMatrix":
+    ) -> JonesMatrix:
         Rm = cls.rotation(-theta_rad).J
         Rp = cls.rotation(theta_rad).J
         D = np.array(
@@ -180,15 +179,15 @@ class JonesMatrix:
         return cls(J=Rm @ D @ Rp)
 
     @classmethod
-    def hwp(cls, theta_rad: float = 0.0) -> "JonesMatrix":
+    def hwp(cls, theta_rad: float = 0.0) -> JonesMatrix:
         return cls.retarder(np.pi, theta_rad)
 
     @classmethod
-    def qwp(cls, theta_rad: float = 0.0) -> "JonesMatrix":
+    def qwp(cls, theta_rad: float = 0.0) -> JonesMatrix:
         return cls.retarder(np.pi / 2.0, theta_rad)
 
     @classmethod
-    def linear_polarizer(cls, theta_rad: float = 0.0) -> "JonesMatrix":
+    def linear_polarizer(cls, theta_rad: float = 0.0) -> JonesMatrix:
         Rm = cls.rotation(-theta_rad).J
         Rp = cls.rotation(theta_rad).J
         P = np.array([[1.0, 0.0], [0.0, 0.0]], dtype=np.complex128)
@@ -197,9 +196,9 @@ class JonesMatrix:
 
 def effective_polarization(
     *,
-    pol_state: Optional[JonesState],
-    pol_transform: Optional[JonesMatrix],
-) -> Optional[np.ndarray]:
+    pol_state: JonesState | None,
+    pol_transform: JonesMatrix | None,
+) -> np.ndarray | None:
     """
     Return the effective polarization vector after applying an optional transform.
 

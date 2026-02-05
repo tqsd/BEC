@@ -1,18 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
-from typing import Any, Callable, Dict, Mapping, Sequence, Tuple
+from typing import Any
 
 import numpy as np
 
 from bec.quantum_dot.enums import QDState, Transition
 from bec.quantum_dot.ops.symbols import QDSymbol
 
-
-LocalDims = Tuple[int, ...]
-SymbolKey = Tuple[LocalDims, str]
+LocalDims = tuple[int, ...]
+SymbolKey = tuple[LocalDims, str]
 Builder = Callable[[LocalDims], np.ndarray]
 
 
@@ -101,7 +101,7 @@ def qd4_sigma_x(pair: Transition) -> np.ndarray:
 
 
 @lru_cache(maxsize=64)
-def fock_ops(dim: int) -> Dict[str, np.ndarray]:
+def fock_ops(dim: int) -> dict[str, np.ndarray]:
     """
     Truncated Fock operators for dimension dim >= 1.
 
@@ -121,7 +121,7 @@ def fock_ops(dim: int) -> Dict[str, np.ndarray]:
 
 
 @lru_cache(maxsize=8)
-def qd4_named_ops() -> Dict[str, np.ndarray]:
+def qd4_named_ops() -> dict[str, np.ndarray]:
     """
     Friendly names for 4-level dot local operators.
 
@@ -131,7 +131,7 @@ def qd4_named_ops() -> Dict[str, np.ndarray]:
       - aliases: "t_<Transition>" for convenience/backwards-compat
       - sx_G_XX
     """
-    ops: Dict[str, np.ndarray] = {}
+    ops: dict[str, np.ndarray] = {}
 
     # projectors (store string keys, not Enum objects)
     ops[str(QDSymbol.PROJ_G.value)] = qd4_projector(QDState.G)
@@ -191,7 +191,7 @@ def build_default_symbol_library(
       - QD local ops for dims (4,)
       - Fock ops for dims (N,) for N in register_fock_dims
     """
-    builders: Dict[SymbolKey, Builder] = {}
+    builders: dict[SymbolKey, Builder] = {}
 
     # QD (4,)
     qd_ops = qd4_named_ops()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 import numpy as np
 
 from bec.metrics import QDDiagnostics
@@ -23,18 +25,19 @@ def run_scenario_once(
     *,
     specs: Sequence[Any],
     cfg: Any,
-    solve_options: Optional[Dict[str, Any]] = None,
-    metric_window_sigma: Tuple[float, float] = (-2.0, 4.0),
+    solve_options: dict[str, Any] | None = None,
+    metric_window_sigma: tuple[float, float] = (-2.0, 4.0),
     # Backward-compat: sweeps passes these but we don't need them here
     scheme: Any = None,
-    x_params: Optional[Mapping[str, float]] = None,
-    drives_for_plot: Optional[Sequence[Any]] = None,
-) -> Tuple[Any, Any, np.ndarray, Any, float]:
+    x_params: Mapping[str, float] | None = None,
+    drives_for_plot: Sequence[Any] | None = None,
+) -> tuple[Any, Any, np.ndarray, Any, float]:
     """
     Runs a single scenario and returns (res, metrics, tlist, units, xx_peak).
     """
     from smef.core.units import Q
     from smef.engine import SimulationEngine, UnitSystem
+
     from bec.quantum_dot.enums import QDState
     from bec.quantum_dot.smef.initial_state import rho0_qd_vacuum
 

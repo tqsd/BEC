@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Mapping, Optional
 
 from smef.core.units import QuantityLike
 
@@ -156,6 +155,7 @@ class PolaronLAParams:
     enable_polaron_renorm: bool = True
     enable_exciton_relaxation: bool = False
     enable_eid: bool = False
+    enable_polaron_scattering: bool = True
 
     spectral_density: SpectralDensityKind = (
         SpectralDensityKind.SUPER_OHMIC_GAUSSIAN
@@ -238,7 +238,7 @@ class PhononCouplings:
             if v < 0.0:
                 raise ValueError(f"{name} must be non-negative")
 
-    def as_dict(self) -> Dict[str, float]:
+    def as_dict(self) -> dict[str, float]:
         return {
             "phi_g": float(self.phi_g),
             "phi_x1": float(self.phi_x1),

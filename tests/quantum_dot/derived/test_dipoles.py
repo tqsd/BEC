@@ -2,11 +2,10 @@ import unittest
 from dataclasses import dataclass
 
 import numpy as np
-
 from smef.core.units import Q
 
-from bec.quantum_dot.derived.dipoles import DipolesMixin
 from bec.quantum_dot.derived.core import DerivedQDBase
+from bec.quantum_dot.derived.dipoles import DipolesMixin
 
 
 class _DipoleParamsQuantity:

@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-from smef.core.units import Q
-
-from smef.engine import UnitSystem
 from smef.core.ir.terms import TermKind
+from smef.core.units import Q
+from smef.engine import UnitSystem
 
 from bec.quantum_dot.dot import QuantumDot
-from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.dipole_params import DipoleParams
+from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.exciton_mixing_params import ExcitonMixingParams
 
 

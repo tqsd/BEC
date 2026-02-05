@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
 import numpy as np
-
 from smef.core.ir.ops import EmbeddedKron, LocalSymbolOp, OpExpr
 from smef.core.ir.terms import Term
 from smef.core.model.protocols import TermCatalogProto
 from smef.core.units import magnitude
 
-from bec.quantum_dot.enums import RateKey, Transition
+from bec.quantum_dot.enums import Transition
 from bec.quantum_dot.smef.modes import QDModeKey, QDModes
+from bec.quantum_dot.transitions import RateKey
 
 
 @dataclass(frozen=True)
@@ -148,7 +149,7 @@ def _get_rate_value(rates: Mapping[Any, Any], rk: RateKey, *, units) -> float:
 
 def _maybe_get_rate_solver(
     rates: Mapping[Any, Any], rk: RateKey, *, units
-) -> Optional[float]:
+) -> float | None:
     """
     Like :func:`_get_rate_value` but returns None if missing and clamps <= 0 to None.
     """

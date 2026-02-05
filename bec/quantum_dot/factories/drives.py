@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 import numpy as np
-
 from smef.core.units import Q, as_quantity, hbar, magnitude
 
 from bec.light.classical import carrier_profiles
@@ -19,7 +16,7 @@ from bec.light.envelopes.gaussian import GaussianEnvelopeU
 from bec.quantum_dot.enums import TransitionPair
 
 
-def _normalize_hv(v: np.ndarray) -> Tuple[complex, complex]:
+def _normalize_hv(v: np.ndarray) -> tuple[complex, complex]:
     a = np.asarray(v, dtype=complex).reshape(2)
     n = float(np.linalg.norm(a))
     if n == 0.0:
@@ -67,22 +64,22 @@ def make_gaussian_field_drive_pi(
     pair: TransitionPair,
     t0,
     sigma,
-    pol_state: Optional[JonesState] = None,
-    pol_transform: Optional[JonesMatrix] = None,
+    pol_state: JonesState | None = None,
+    pol_transform: JonesMatrix | None = None,
     theta_rad: float = float(np.pi),
     compensate_polaron: bool = True,
-    omega0_rad_s: Optional[float] = None,
+    omega0_rad_s: float | None = None,
     # New: chirp selection (backwards compatible)
-    chirp_kind: Optional[str] = None,  # "none", "constant", "linear", "tanh"
+    chirp_kind: str | None = None,  # "none", "constant", "linear", "tanh"
     chirp_t0=None,
     # Backwards compatible linear chirp parameter
-    chirp_rate_rad_s2: Optional[float] = None,
+    chirp_rate_rad_s2: float | None = None,
     # New parameters
-    chirp_delta_rad_s: Optional[float] = None,   # for constant chirp
-    tanh_delta_rad_s: Optional[float] = None,    # for tanh chirp
-    tanh_tau_s: Optional[float] = None,          # for tanh chirp
-    preferred_kind: Optional[str] = None,  # "1ph" or "2ph"
-    label: Optional[str] = None,
+    chirp_delta_rad_s: float | None = None,   # for constant chirp
+    tanh_delta_rad_s: float | None = None,    # for tanh chirp
+    tanh_tau_s: float | None = None,          # for tanh chirp
+    preferred_kind: str | None = None,  # "1ph" or "2ph"
+    label: str | None = None,
 ) -> ClassicalFieldDriveU:
     """
     Build a Gaussian pi (or general theta) pulse for a given TransitionPair.

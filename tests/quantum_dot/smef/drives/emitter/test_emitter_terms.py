@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import unittest
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
-
 from smef.core.ir.ops import OpExprKind
 from smef.core.ir.terms import TermKind
 
 from bec.quantum_dot.enums import QDState, Transition, TransitionPair
-from bec.quantum_dot.smef.drives.emitter.drive_term import build_drive_h_term
 from bec.quantum_dot.smef.drives.emitter.detuning_term import (
     build_detuning_h_term,
 )
+from bec.quantum_dot.smef.drives.emitter.drive_term import build_drive_h_term
 from bec.quantum_dot.smef.drives.emitter.eid_terms import (
     build_eid_c_term_phenom,
 )
@@ -28,7 +27,7 @@ class TestEmitterComponents(unittest.TestCase):
         """
         qd_index = 0
         omega = np.array([1.0 + 0.0j, 2.0 + 1.0j], dtype=complex)
-        meta: Dict[str, Any] = {"kind": "1ph"}
+        meta: dict[str, Any] = {"kind": "1ph"}
 
         term = build_drive_h_term(
             qd_index=qd_index,

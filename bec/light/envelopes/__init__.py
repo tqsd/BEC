@@ -13,20 +13,18 @@ All envelopes:
 """
 
 from .base import (
+    CompiledEnvelope,
     EnvelopeU,
     SerializableEnvelopeU,
-    CompiledEnvelope,
     TimeBasisU,
 )
-
 from .gaussian import GaussianEnvelopeU
-from .symbolic import SymbolicEnvelopeU
-from .tabulated import TabulatedEnvelopeU
-
 from .registry import (
     envelope_from_json,
     envelope_to_json,
 )
+from .symbolic import SymbolicEnvelopeU
+from .tabulated import TabulatedEnvelopeU
 
 __all__ = [
     # base protocols / helpers

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import numpy as np
 
-from bec.metrics.linops import partial_trace, _dims_prod
+from bec.metrics.linops import _dims_prod, partial_trace
 
 
 @dataclass(frozen=True)

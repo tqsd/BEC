@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
-from smef.core.units import QuantityLike, as_quantity
+from smef.core.units import QuantityLike
 
 from bec.core.units import as_eV
-
 
 EnergyLike = Any
 
@@ -32,7 +31,7 @@ class EnergyStructure:
         X1: EnergyLike,
         X2: EnergyLike,
         XX: EnergyLike,
-    ) -> "EnergyStructure":
+    ) -> EnergyStructure:
         obj = cls(X1=as_eV(X1), X2=as_eV(X2), XX=as_eV(XX))
         obj.validate()
         return obj
@@ -44,7 +43,7 @@ class EnergyStructure:
         exciton: EnergyLike,
         fss: EnergyLike = 0.0,
         binding: EnergyLike = 0.0,
-    ) -> "EnergyStructure":
+    ) -> EnergyStructure:
         EX = as_eV(exciton).to("eV")
         d = as_eV(fss).to("eV")
         Eb = as_eV(binding).to("eV")
@@ -69,7 +68,7 @@ class EnergyStructure:
     def binding(self) -> QuantityLike:
         return (2.0 * self.exciton_center.to("eV") - self.XX.to("eV")).to("eV")
 
-    def energies_eV(self) -> Dict[str, float]:
+    def energies_eV(self) -> dict[str, float]:
         return {
             "G": float(self.G.to("eV").magnitude),
             "X1": float(self.X1.to("eV").magnitude),

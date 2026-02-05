@@ -1,22 +1,21 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional
+from typing import Any
 
 import numpy as np
-
-from smef.core.units import Q, hbar, magnitude
+from smef.core.units import Q, hbar
 
 from bec.quantum_dot.enums import RateKey, Transition, TransitionPair
+
+# Import the real QDDerivedView from your code
+from bec.quantum_dot.smef.derived_view import QDDerivedView
 from bec.quantum_dot.transitions import (
     DEFAULT_TRANSITION_REGISTRY,
     TransitionRegistry,
 )
-
-
-# Import the real QDDerivedView from your code
-from bec.quantum_dot.smef.derived_view import QDDerivedView
 
 
 @dataclass(frozen=True)
@@ -60,7 +59,7 @@ class _PhononOutputsStub:
 
 class TestQDDerivedView(unittest.TestCase):
     def _make_view(
-        self, *, registry: Optional[TransitionRegistry] = None
+        self, *, registry: TransitionRegistry | None = None
     ) -> QDDerivedView:
         t_registry = registry or DEFAULT_TRANSITION_REGISTRY
 

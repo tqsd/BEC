@@ -2,16 +2,13 @@ import unittest
 
 from bec.quantum_dot.enums import (
     QDState,
-    Transition,
-    TransitionPair,
-    TransitionKind,
     RateKey,
-)
-
-from bec.quantum_dot.enums import (
-    transition_pair_of,
-    reverse_transition,
+    Transition,
+    TransitionKind,
+    TransitionPair,
     directed_of,
+    reverse_transition,
+    transition_pair_of,
 )
 
 

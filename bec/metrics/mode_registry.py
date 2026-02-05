@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Hashable, Iterable, Sequence
+from typing import Any
 
 from bec.metrics.linops import _as_list_int
 

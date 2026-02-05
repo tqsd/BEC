@@ -1,6 +1,6 @@
 import unittest
-import numpy as np
 
+import numpy as np
 from smef.core.units import Q
 
 from bec.light.core.polarization import JonesState

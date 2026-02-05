@@ -1,6 +1,6 @@
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Mapping, Optional, Sequence
 
 from smef.core.ir.terms import Term
 from smef.core.model.protocols import (
@@ -9,22 +9,31 @@ from smef.core.model.protocols import (
     MaterializeBundle,
     TermCatalogProto,
 )
-from smef.core.units import QuantityLike
+from smef.core.units import Q, QuantityLike
 from smef.engine import UnitSystem
 
-from bec.quantum_dot.enums import RateKey
 from bec.quantum_dot.models.decay_model import DecayModel, DecayOutputs
 from bec.quantum_dot.models.phonon_model import (
     NullPhononModel,
-    PhononOutputs,
     PhononModelProto,
+    PhononOutputs,
     PolaronLAPhononModel,
+)
+from bec.quantum_dot.smef.catalogs import (
+    QDCollapseCatalog,
+    QDHamiltonianCatalog,
 )
 from bec.quantum_dot.smef.catalogs.observables import QDObservablesCatalog
 from bec.quantum_dot.smef.derived_view import QDDerivedView
+from bec.quantum_dot.smef.drives import (
+    QDDriveDecodeContext,
+    QDDriveDecoder,
+    QDDriveStrengthModel,
+)
 from bec.quantum_dot.smef.drives.emitter.emitter import QDDriveTermEmitter
 from bec.quantum_dot.smef.materializer import default_qd_materializer
 from bec.quantum_dot.smef.modes import QDModes
+from bec.quantum_dot.spec import energy_structure
 from bec.quantum_dot.spec.cavity_params import CavityParams
 from bec.quantum_dot.spec.dipole_params import DipoleParams
 from bec.quantum_dot.spec.energy_structure import EnergyStructure
@@ -32,19 +41,8 @@ from bec.quantum_dot.spec.exciton_mixing_params import ExcitonMixingParams
 from bec.quantum_dot.spec.phonon_params import PhononModelKind, PhononParams
 from bec.quantum_dot.transitions import (
     DEFAULT_TRANSITION_REGISTRY,
+    RateKey,
     TransitionRegistry,
-)
-
-from smef.core.model.protocols import CompileBundle
-from bec.quantum_dot.smef.drives import (
-    QDDriveDecodeContext,
-    QDDriveDecoder,
-    QDDriveStrengthModel,
-)
-
-from bec.quantum_dot.smef.catalogs import (
-    QDHamiltonianCatalog,
-    QDCollapseCatalog,
 )
 
 
@@ -103,9 +101,9 @@ class QuantumDot(CompilableModelProto):
 
     energy: EnergyStructure
     dipoles: DipoleParams
-    cavity: Optional[CavityParams] = None
-    phonons: Optional[PhononParams] = None
-    mixing: Optional[ExcitonMixingParams] = None
+    cavity: CavityParams | None = None
+    phonons: PhononParams | None = None
+    mixing: ExcitonMixingParams | None = None
 
     transitions: TransitionRegistry = DEFAULT_TRANSITION_REGISTRY
 
@@ -129,7 +127,10 @@ class QuantumDot(CompilableModelProto):
         if self.phonons.kind is PhononModelKind.POLARON_LA:
             # If later you need exciton_split_rad_s, pass it here (or compute in DerivedQD)
             return PolaronLAPhononModel(
-                params=self.phonons, transitions=self.transitions
+                params=self.phonons,
+                transitions=self.transitions,
+                energy=self.energy,
+                mixing=self.mixing,
             )
 
         # Safety fallback

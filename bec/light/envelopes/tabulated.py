@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any
 
 import numpy as np
-
-from smef.core.units import QuantityLike, Q, as_quantity, magnitude
+from smef.core.units import Q, QuantityLike, as_quantity, magnitude
 
 from .base import SerializableEnvelopeU
 
@@ -35,8 +35,8 @@ class TabulatedEnvelopeU(SerializableEnvelopeU):
       It does not change internal storage (always seconds).
     """
 
-    t_s: Tuple[float, ...]
-    y: Tuple[float, ...]
+    t_s: tuple[float, ...]
+    y: tuple[float, ...]
     t_unit: str = "s"
 
     def __post_init__(self) -> None:
@@ -69,7 +69,7 @@ class TabulatedEnvelopeU(SerializableEnvelopeU):
         y: Iterable[Any],
         *,
         t_unit: str = "s",
-    ) -> "TabulatedEnvelopeU":
+    ) -> TabulatedEnvelopeU:
         # Numbers are interpreted as t_unit; quantities converted to seconds.
         t_s = tuple(_mag(as_quantity(v, t_unit), "s") for v in t)
         y_f = tuple(float(v) for v in y)
@@ -83,7 +83,7 @@ class TabulatedEnvelopeU(SerializableEnvelopeU):
             np.interp(t_s, self.t_s, self.y, left=self.y[0], right=self.y[-1])
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         # Store times in declared t_unit for readability, plus the unit itself.
         t_vals = [float(Q(v, "s").to(self.t_unit).magnitude) for v in self.t_s]
         return {
@@ -93,7 +93,7 @@ class TabulatedEnvelopeU(SerializableEnvelopeU):
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "TabulatedEnvelopeU":
+    def from_dict(cls, data: dict[str, Any]) -> TabulatedEnvelopeU:
         t_blk = data["t"]
         unit = str(t_blk.get("unit", "s"))
         t_vals = [as_quantity(float(v), unit) for v in t_blk["values"]]

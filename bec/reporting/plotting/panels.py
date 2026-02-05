@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Mapping, Optional, Sequence, Tuple
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 from matplotlib import ticker as mticker
@@ -10,7 +10,6 @@ from .labels import ax_label
 from .styles import PlotStyle
 from .traces import DriveSeries, QDTraces
 from .twin_registry import clear_twin_axes, register_twin_axes
-
 
 _TWO_PI = 2.0 * np.pi
 
@@ -137,7 +136,7 @@ def _maybe_marker_kwargs(
     *,
     t: np.ndarray,
     want_markers: bool,
-    color: Optional[str],
+    color: str | None,
 ) -> dict:
     """
     Marker control:
@@ -243,7 +242,7 @@ def draw_drive_panel(
     detuning_rtol = float(getattr(style, "detuning_rtol", 0.0))
     use_GHz = bool(getattr(style, "detuning_use_GHz", True))
 
-    detuning_curves: list[Tuple[DriveSeries, np.ndarray]] = []
+    detuning_curves: list[tuple[DriveSeries, np.ndarray]] = []
     for d in drives:
         dw = getattr(d, "delta_omega_rad_s", None)
         if dw is None:

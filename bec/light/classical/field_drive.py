@@ -1,23 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Union
 
 import numpy as np
-
 from smef.core.units import QuantityLike, as_quantity, magnitude
 
-from bec.light.envelopes.base import EnvelopeU, SerializableEnvelopeU
-from bec.light.envelopes.registry import envelope_from_json, envelope_to_json
 from bec.light.core.polarization import (
     JonesMatrix,
     JonesState,
     effective_polarization,
 )
+from bec.light.envelopes.base import EnvelopeU, SerializableEnvelopeU
+from bec.light.envelopes.registry import envelope_from_json, envelope_to_json
 
 from .amplitude import FieldAmplitude
 from .carrier import Carrier
-
 
 TimeLike = Union[QuantityLike, float, int]
 
@@ -48,13 +46,13 @@ class ClassicalFieldDriveU:
     envelope: EnvelopeU
     amplitude: FieldAmplitude
 
-    carrier: Optional[Carrier] = None
+    carrier: Carrier | None = None
 
-    pol_state: Optional[JonesState] = None
-    pol_transform: Optional[JonesMatrix] = None
+    pol_state: JonesState | None = None
+    pol_transform: JonesMatrix | None = None
 
-    preferred_kind: Optional[str] = None  # "1ph" or "2ph"
-    label: Optional[str] = None
+    preferred_kind: str | None = None  # "1ph" or "2ph"
+    label: str | None = None
 
     def E_env_phys(self, t_phys: TimeLike) -> QuantityLike:
         """
@@ -72,7 +70,7 @@ class ClassicalFieldDriveU:
         val = float(self.envelope(t_q))
         return self.amplitude.E0_V_m() * val
 
-    def omega_L_phys(self, t_phys: TimeLike) -> Optional[QuantityLike]:
+    def omega_L_phys(self, t_phys: TimeLike) -> QuantityLike | None:
         """
         Return omega_L(t) as QuantityLike in rad/s (or None if no carrier).
         """
@@ -80,7 +78,7 @@ class ClassicalFieldDriveU:
             return None
         return self.carrier.omega_phys(_time_quantity(t_phys))
 
-    def omega_L_rad_s(self, t_phys: TimeLike) -> Optional[float]:
+    def omega_L_rad_s(self, t_phys: TimeLike) -> float | None:
         """
         Return omega_L(t) as float in rad/s (or None if no carrier).
         """
@@ -90,7 +88,7 @@ class ClassicalFieldDriveU:
             magnitude(self.carrier.omega_phys(_time_quantity(t_phys)), "rad/s")
         )
 
-    def effective_pol(self) -> Optional[np.ndarray]:
+    def effective_pol(self) -> np.ndarray | None:
         """
         Return effective polarization vector (length-2 complex array), or None.
         """
@@ -98,7 +96,7 @@ class ClassicalFieldDriveU:
             pol_state=self.pol_state, pol_transform=self.pol_transform
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         if not isinstance(self.envelope, SerializableEnvelopeU):
             raise TypeError(
                 "Envelope is not serializable; expected SerializableEnvelopeU"
@@ -122,7 +120,7 @@ class ClassicalFieldDriveU:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ClassicalFieldDriveU":
+    def from_dict(cls, data: dict[str, Any]) -> ClassicalFieldDriveU:
         env = envelope_from_json(data["envelope"])
         amp = FieldAmplitude.from_dict(data["amplitude"])
 
@@ -149,8 +147,8 @@ class ClassicalFieldDriveU:
         self,
         *,
         time_unit_s: float,
-        t_eval_solver: Optional[float] = None,
-        sample_window: Tuple[float, float] = (0.0, 100.0),
+        t_eval_solver: float | None = None,
+        sample_window: tuple[float, float] = (0.0, 100.0),
         sample_points: int = 1001,
         show_ascii_plot: bool = True,
     ) -> str:
@@ -171,8 +169,8 @@ class ClassicalFieldDriveU:
         self,
         *,
         time_unit_s: float,
-        t_eval_solver: Optional[float] = None,
-        sample_window: Tuple[float, float] = (0.0, 100.0),
+        t_eval_solver: float | None = None,
+        sample_window: tuple[float, float] = (0.0, 100.0),
         sample_points: int = 1001,
         show_ascii_plot: bool = True,
     ) -> str:
@@ -189,7 +187,7 @@ class ClassicalFieldDriveU:
         )
         return render_rich(rep, show_ascii_plot=show_ascii_plot)
 
-    def with_E0(self, E0: Any) -> "ClassicalFieldDriveU":
+    def with_E0(self, E0: Any) -> ClassicalFieldDriveU:
         """
         Return a new drive with the same envelope/carrier/polarization/etc.,
         but with a new field amplitude E0 (units: V/m).
@@ -205,7 +203,7 @@ class ClassicalFieldDriveU:
             label=self.label,
         )
 
-    def scaled(self, factor: float) -> "ClassicalFieldDriveU":
+    def scaled(self, factor: float) -> ClassicalFieldDriveU:
         """
         Return a new drive with E0 multiplied by `factor`.
         """

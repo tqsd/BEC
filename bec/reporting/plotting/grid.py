@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.axes import Axes
 
 from .labels import ax_label
@@ -16,7 +16,6 @@ from .panels import (
 from .styles import PlotStyle, apply_style, default_style
 from .traces import QDTraces
 from .twin_registry import clear_twin_axes, iter_axes_for_legend
-
 
 _TIME_SCALE = {
     "s": 1.0,
@@ -39,7 +38,7 @@ def _as_1d_float(x) -> np.ndarray:
     return np.asarray(x, dtype=float).reshape(-1)
 
 
-def _time_convert(t_s: np.ndarray, time_display: str) -> Tuple[np.ndarray, str]:
+def _time_convert(t_s: np.ndarray, time_display: str) -> tuple[np.ndarray, str]:
     t_s = _as_1d_float(t_s)
     tmax = float(np.nanmax(t_s)) if t_s.size else 1.0
     if time_display == "auto":
@@ -64,7 +63,7 @@ class PlotConfig:
     ncols: int = 1
     sharex: bool = True
     sharey_by_row: bool = True
-    column_titles: Optional[Sequence[str]] = None
+    column_titles: Sequence[str] | None = None
 
     # Legend behavior
     legend: bool = True
@@ -74,8 +73,8 @@ class PlotConfig:
     legend_gutter: float = 0.22
 
 
-def _available_panels(tr: QDTraces, cfg: PlotConfig) -> List[str]:
-    panels: List[str] = []
+def _available_panels(tr: QDTraces, cfg: PlotConfig) -> list[str]:
+    panels: list[str] = []
 
     have_drive = bool(getattr(tr, "drives", None))
     have_pops = bool(getattr(tr, "pops", None))
@@ -202,8 +201,8 @@ def _add_legend_gutter(
     ax_leg = fig.add_axes([left, 0.08, width, 0.84])
     ax_leg.axis("off")
 
-    handles: List[object] = []
-    labels: List[str] = []
+    handles: list[object] = []
+    labels: list[str] = []
 
     def header(text: str):
         h = plt.Line2D([], [], linestyle="none")
@@ -252,8 +251,8 @@ def _add_legend_gutter(
 def plot_qd_run(
     tr: QDTraces,
     *,
-    cfg: Optional[PlotConfig] = None,
-    style: Optional[PlotStyle] = None,
+    cfg: PlotConfig | None = None,
+    style: PlotStyle | None = None,
 ) -> plt.Figure:
     cfg = cfg or PlotConfig()
     style = style or default_style()
@@ -310,9 +309,9 @@ def plot_qd_run(
 def plot_qd_runs_grid(
     traces: Sequence[QDTraces],
     *,
-    cfg: Optional[PlotConfig] = None,
-    style: Optional[PlotStyle] = None,
-) -> List[plt.Figure]:
+    cfg: PlotConfig | None = None,
+    style: PlotStyle | None = None,
+) -> list[plt.Figure]:
     cfg = cfg or PlotConfig()
     style = style or default_style()
     apply_style(style)
@@ -323,7 +322,7 @@ def plot_qd_runs_grid(
     ncols = int(cfg.ncols) if int(cfg.ncols) > 0 else len(traces)
     ncols = min(ncols, len(traces))
 
-    figs: List[plt.Figure] = []
+    figs: list[plt.Figure] = []
 
     for start in range(0, len(traces), ncols):
         chunk = list(traces[start : start + ncols])
@@ -357,7 +356,7 @@ def plot_qd_runs_grid(
         )
 
         if nrows == 1 and this_cols == 1:
-            axes_grid: List[List[Axes]] = [[axes]]
+            axes_grid: list[list[Axes]] = [[axes]]
         elif nrows == 1:
             axes_grid = [list(axes)]
         elif this_cols == 1:
@@ -368,7 +367,7 @@ def plot_qd_runs_grid(
         if cfg.title:
             fig.suptitle(cfg.title)
 
-        flat_axes: List[Axes] = []
+        flat_axes: list[Axes] = []
         for row in axes_grid:
             for ax in row:
                 clear_twin_axes(ax)

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
-
+from smef.core.ir.ops import OpExpr
 from smef.core.ir.terms import Term, TermKind
 
 from bec.quantum_dot.enums import TransitionPair
@@ -24,11 +25,12 @@ def build_eid_c_term_phenom(
     qd_index: int,
     drive_id: Any,
     pair: TransitionPair,
-    dst_proj_state,
+    dst_proj_state: Any,
+    src_proj_state: Any,
     omega_solver: np.ndarray,
     eid_scale: float,
     meta: Mapping[str, Any],
-) -> Optional[Term]:
+) -> Term | None:
     """
     Phenomenological EID:
 
@@ -45,11 +47,12 @@ def build_eid_c_term_phenom(
     gamma_solver = scale * _abs2(omega_solver)
     sqrt_gamma = np.sqrt(np.maximum(gamma_solver, 0.0)).astype(complex)
 
-    P_high = qd_local(qd_index, proj_symbol(dst_proj_state))
-
+    P_dst = qd_local(qd_index, proj_symbol(dst_proj_state))
+    P_src = qd_local(qd_index, proj_symbol(src_proj_state))
+    P_diff = OpExpr.summation([P_dst, OpExpr.scale(complex(-1.0), P_src)])
     return Term(
         kind=TermKind.C,
-        op=P_high,
+        op=P_diff,
         coeff=ArrayCoeff(sqrt_gamma),
         label="L_eid_%s_%s" % (str(drive_id), str(pair.value)),
         meta={
@@ -67,17 +70,17 @@ def build_eid_c_term_polaron(
     drive_id: Any,
     pair: TransitionPair,
     dst_proj_state: Any,
+    src_proj_state: Any,
     omega_solver: np.ndarray,
     detuning_rad_s: np.ndarray,
     time_unit_s: float,
-    polaron_rates: Optional[PolaronDriveRates],
+    polaron_rates: PolaronDriveRates | None,
     scale: float,
     meta: Mapping[str, Any],
-) -> Optional[Term]:
+) -> Term | None:
     """
     Polaron-shaped EID (drive-dependent):
 
-      gamma_1_s(t) = polaron_rates.gamma_eid_1_s(omega_solver, detuning_rad_s, time_unit_s, scale)
       gamma_solver(t) = gamma_1_s(t) * time_unit_s
       L_eid(t) = sqrt(gamma_solver(t)) * P_high
 
@@ -96,25 +99,35 @@ def build_eid_c_term_polaron(
 
     omega_solver = np.asarray(omega_solver, dtype=complex).reshape(-1)
     detuning_rad_s = np.asarray(detuning_rad_s, dtype=float).reshape(-1)
+
+    Omega_rad_s = omega_solver / float(time_unit_s)
+    Omega_abs = np.sqrt(
+        (Omega_rad_s.real * Omega_rad_s.real)
+        + (Omega_rad_s.imag * Omega_rad_s.imag)
+    )
+    Delta = np.asarray(detuning_rad_s, dtype=float).reshape(-1)
+    omega_star = np.sqrt((Delta * Delta) + (Omega_abs * Omega_abs))
     if detuning_rad_s.size != omega_solver.size:
         raise ValueError("detuning_rad_s must have same length as omega_solver")
 
     gamma_1_s = polaron_rates.gamma_eid_1_s(
         omega_solver=omega_solver,
-        detuning_rad_s=detuning_rad_s,
+        omega_star_rad_s=omega_star,
         time_unit_s=s,
-        scale=sc,
+        calibration=sc,
     )
     gamma_1_s = np.asarray(gamma_1_s, dtype=float).reshape(-1)
 
     gamma_solver = gamma_1_s * s
     sqrt_gamma = np.sqrt(np.maximum(gamma_solver, 0.0)).astype(complex)
 
-    P_high = qd_local(qd_index, proj_symbol(dst_proj_state))
+    P_dst = qd_local(qd_index, proj_symbol(dst_proj_state))
+    P_src = qd_local(qd_index, proj_symbol(src_proj_state))
+    P_diff = OpExpr.summation([P_dst, OpExpr.scale(complex(-1.0), P_src)])
 
     return Term(
         kind=TermKind.C,
-        op=P_high,
+        op=P_diff,
         coeff=ArrayCoeff(sqrt_gamma),
         label="L_eid_polaron_%s_%s" % (str(drive_id), str(pair.value)),
         meta={

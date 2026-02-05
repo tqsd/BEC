@@ -1,29 +1,29 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Mapping, Optional, Sequence
 
+import math
 import numpy as np
+from smef.core.units import QuantityLike, magnitude, Q, hbar, magnitude
 
-from smef.core.units import QuantityLike, magnitude
-
-from bec.quantum_dot.enums import RateKey, Transition, TransitionPair
+from bec.quantum_dot.enums import Transition, TransitionPair
 from bec.quantum_dot.models.decay_model import DecayOutputs
 from bec.quantum_dot.models.phonon_model import PhononOutputs
 from bec.quantum_dot.spec.dipole_params import DipoleParams
 from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.exciton_mixing_params import ExcitonMixingParams
 from bec.quantum_dot.spec.phonon_params import PhononParams
-from bec.quantum_dot.transitions import TransitionRegistry
+from bec.quantum_dot.transitions import RateKey, TransitionRegistry
 
 
 @dataclass(frozen=True)
 class QDDerivedView:
     energy: EnergyStructure
     dipoles: DipoleParams
-    mixing: Optional[ExcitonMixingParams]
-    phonons: Optional[PhononParams]
+    mixing: ExcitonMixingParams | None
+    phonons: PhononParams | None
 
     t_registry: TransitionRegistry
     decay_outputs: DecayOutputs
@@ -113,8 +113,74 @@ class QDDerivedView:
         ph = self.phonons
         if ph is None:
             return 0.0
-        val = getattr(ph.phenomenological, "gamma_phi_eid_scale", 0.0)
+
+        # If EID is enabled in the polaron model, default to 1.0.
+        try:
+            pol = getattr(ph, "polaron_la", None)
+            eid_enabled = bool(
+                pol is not None and getattr(pol, "enable_eid", False)
+            )
+        except Exception:
+            eid_enabled = False
+
+        default = 1.0 if eid_enabled else 0.0
+        val = getattr(ph.phenomenological, "gamma_phi_eid_scale", default)
         try:
             return float(val)
         except Exception:
+            return float(default)
+
+    @cached_property
+    def eid_enabled(self) -> bool:
+        ph = self.phonons
+        if ph is None:
+            return False
+        pol = getattr(ph, "polaron_la", None)
+        return bool(pol is not None and getattr(pol, "enable_eid", False))
+
+    @cached_property
+    def eid_calibration(self) -> float:
+        ph = self.phonons
+        if ph is None:
+            return 1.0
+        val = getattr(ph.phenomenological, "gamma_phi_eid_scale", 1.0)
+        try:
+            return float(val)
+        except Exception:
+            return 1.0
+
+    @cached_property
+    def delta_prime_eV(self) -> float:
+        m = self.mixing
+        if m is None:
             return 0.0
+        return float(magnitude(m.delta_prime, "eV"))
+
+    @cached_property
+    def exciton_theta_rad(self) -> float:
+        # theta = 0.5 * atan2(2*delta_prime, fss)
+        return 0.5 * math.atan2(2.0 * self.delta_prime_eV, self.fss_eV)
+
+    @cached_property
+    def exciton_eigsplitting_eV(self) -> float:
+        fss = float(self.fss_eV)
+        dp = float(self.delta_prime_eV)
+        return float(math.sqrt((fss * fss) + (2.0 * dp) * (2.0 * dp)))
+
+    @cached_property
+    def exciton_eigsplitting_rad_s(self) -> float:
+        de = Q(self.exciton_eigsplitting_eV, "eV").to("J")
+        return float((de / hbar).to("rad/s").magnitude)
+
+    @cached_property
+    def exciton_eig_U(self) -> np.ndarray:
+        """
+        2x2 unitary that rotates from {X1, X2} basis into eigenbasis.
+
+        Convention: columns are eigenvectors in the {X1, X2} basis.
+        """
+        th = float(self.exciton_theta_rad)
+        c = math.cos(th)
+        s = math.sin(th)
+        # simple real rotation (sufficient for real delta_prime)
+        return np.array([[c, -s], [s, c]], dtype=float)

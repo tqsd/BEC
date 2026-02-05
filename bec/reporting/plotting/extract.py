@@ -1,23 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from typing import (
     Any,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
 )
 
 import numpy as np
-
 from smef.core.units import Q, hbar, magnitude
 
 from .traces import DriveSeries, QDTraces
-
 
 _POP_KEYS = ("pop_G", "pop_X1", "pop_X2", "pop_XX")
 _OUT_KEYS = ("n_GX_H", "n_GX_V", "n_XX_H", "n_XX_V")
@@ -37,7 +28,7 @@ def _as_1d(x: Any, n: int, *, name: str) -> np.ndarray:
 
 
 def _slice_window(
-    t_s: np.ndarray, window_s: Optional[Tuple[float, float]]
+    t_s: np.ndarray, window_s: tuple[float, float] | None
 ) -> slice:
     if window_s is None:
         return slice(None)
@@ -51,8 +42,8 @@ def _slice_window(
 
 
 def _normalize_drives(
-    drives: Optional[Union[Any, Sequence[Optional[Any]]]],
-) -> Tuple[Any, ...]:
+    drives: Any | Sequence[Any | None] | None,
+) -> tuple[Any, ...]:
     if drives is None:
         return ()
     if isinstance(drives, (list, tuple)):
@@ -60,7 +51,7 @@ def _normalize_drives(
     return (drives,)
 
 
-def _energy_eV(x: Any) -> Optional[float]:
+def _energy_eV(x: Any) -> float | None:
     if x is None:
         return None
     try:
@@ -72,7 +63,7 @@ def _energy_eV(x: Any) -> Optional[float]:
             return None
 
 
-def _wavelength_nm_from_eV(E_eV: Optional[float]) -> Optional[float]:
+def _wavelength_nm_from_eV(E_eV: float | None) -> float | None:
     if E_eV is None:
         return None
     E = float(E_eV)
@@ -83,7 +74,7 @@ def _wavelength_nm_from_eV(E_eV: Optional[float]) -> Optional[float]:
 
 def _output_wavelengths_from_qd(
     qd: Any,
-) -> Tuple[Dict[str, float], Dict[str, float]]:
+) -> tuple[dict[str, float], dict[str, float]]:
     """
     Compute emission wavelengths from the level energies in qd.energy.
 
@@ -91,8 +82,8 @@ def _output_wavelengths_from_qd(
       GX_X1, GX_X2, GX_center
       XX_X1, XX_X2, XX_center
     """
-    wl_nm: Dict[str, float] = {}
-    E_eV: Dict[str, float] = {}
+    wl_nm: dict[str, float] = {}
+    E_eV: dict[str, float] = {}
 
     energy = getattr(qd, "energy", None)
     if energy is None:
@@ -157,7 +148,7 @@ def _output_wavelengths_from_qd(
     return wl_nm, E_eV
 
 
-def _carrier_omega0_rad_s(drive_obj: Any) -> Optional[float]:
+def _carrier_omega0_rad_s(drive_obj: Any) -> float | None:
     carrier = getattr(drive_obj, "carrier", None)
     if carrier is None:
         return None
@@ -175,7 +166,7 @@ def _carrier_omega0_rad_s(drive_obj: Any) -> Optional[float]:
 
 def _carrier_delta_omega_rad_s(
     drive_obj: Any, t_s: np.ndarray
-) -> Optional[np.ndarray]:
+) -> np.ndarray | None:
     """
     Sample carrier.delta_omega on the provided physical time grid t_s [s].
 
@@ -215,8 +206,8 @@ def _carrier_delta_omega_rad_s(
 
 
 def _drive_wavelength_nm_from_omega0(
-    w0_rad_s: Optional[float],
-) -> Optional[float]:
+    w0_rad_s: float | None,
+) -> float | None:
     if w0_rad_s is None:
         return None
     w0 = float(w0_rad_s)
@@ -227,7 +218,7 @@ def _drive_wavelength_nm_from_omega0(
 
 
 def _drive_label(
-    drive_obj: Any, idx: int, wavelength_nm: Optional[float]
+    drive_obj: Any, idx: int, wavelength_nm: float | None
 ) -> str:
     lab = getattr(drive_obj, "label", None)
     if isinstance(lab, str) and lab.strip():
@@ -242,7 +233,7 @@ def _drive_label(
 
 def _sample_callable_over_time(
     fn: Any, t_s: np.ndarray
-) -> Optional[np.ndarray]:
+) -> np.ndarray | None:
     """
     Sample a callable that accepts TimeLike; we pass float seconds.
 
@@ -264,13 +255,13 @@ def extract_qd_traces(
     res: Any,
     *,
     units: Any,
-    drives: Optional[Union[Any, Sequence[Optional[Any]]]] = None,
-    qd: Optional[Any] = None,
+    drives: Any | Sequence[Any | None] | None = None,
+    qd: Any | None = None,
     pop_keys: Sequence[str] = _POP_KEYS,
     out_keys: Sequence[str] = _OUT_KEYS,
     coherence_prefix: str = "coh_",
-    extra_keys: Optional[Iterable[str]] = None,
-    window_s: Optional[Tuple[float, float]] = None,
+    extra_keys: Iterable[str] | None = None,
+    window_s: tuple[float, float] | None = None,
 ) -> QDTraces:
     # --- Time axis ---
     t_solver_full = np.asarray(
@@ -294,21 +285,21 @@ def extract_qd_traces(
     n_full = int(t_s_full.shape[0])
 
     # --- Populations ---
-    pops: Dict[str, np.ndarray] = {}
+    pops: dict[str, np.ndarray] = {}
     for k in pop_keys:
         if k in expect:
             arr = _as_1d(expect[k], n_full, name=str(k))[sl]
             pops[str(k)] = np.asarray(np.real(arr), dtype=float)
 
     # --- Outputs ---
-    outputs: Dict[str, np.ndarray] = {}
+    outputs: dict[str, np.ndarray] = {}
     for k in out_keys:
         if k in expect:
             arr = _as_1d(expect[k], n_full, name=str(k))[sl]
             outputs[str(k)] = np.asarray(np.real(arr), dtype=float)
 
     # --- Coherences ---
-    coherences: Dict[str, np.ndarray] = {}
+    coherences: dict[str, np.ndarray] = {}
     for k, arr in expect.items():
         if isinstance(k, str) and k.startswith(coherence_prefix):
             coherences[k] = np.asarray(
@@ -316,7 +307,7 @@ def extract_qd_traces(
             )
 
     # --- Extra ---
-    extra: Dict[str, np.ndarray] = {}
+    extra: dict[str, np.ndarray] = {}
     if extra_keys is not None:
         for k in extra_keys:
             if k in expect:
@@ -325,8 +316,8 @@ def extract_qd_traces(
                 )
 
     # --- Output wavelength metadata (first-class) ---
-    output_wavelengths_nm: Dict[str, float] = {}
-    output_transition_energies_eV: Dict[str, float] = {}
+    output_wavelengths_nm: dict[str, float] = {}
+    output_transition_energies_eV: dict[str, float] = {}
     if qd is not None:
         output_wavelengths_nm, output_transition_energies_eV = (
             _output_wavelengths_from_qd(qd)
@@ -334,8 +325,8 @@ def extract_qd_traces(
 
     # --- Drives ---
     drives_in = _normalize_drives(drives)
-    drive_series: List[DriveSeries] = []
-    drive_wavelengths_nm: Dict[str, float] = {}
+    drive_series: list[DriveSeries] = []
+    drive_wavelengths_nm: dict[str, float] = {}
 
     # Dipole magnitude for Omega overlay (optional)
     mu = None

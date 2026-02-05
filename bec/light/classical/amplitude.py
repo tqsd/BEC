@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any
 
 from smef.core.units import QuantityLike, as_quantity, magnitude
 
@@ -16,7 +16,7 @@ class FieldAmplitude:
     """
 
     E0: QuantityLike
-    label: Optional[str] = None
+    label: str | None = None
 
     _E0_V_m: float = field(init=False, repr=False)
 
@@ -28,7 +28,7 @@ class FieldAmplitude:
     def E0_V_m(self) -> float:
         return float(self._E0_V_m)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "field_amplitude",
             "label": self.label,
@@ -36,7 +36,7 @@ class FieldAmplitude:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "FieldAmplitude":
+    def from_dict(cls, data: dict[str, Any]) -> FieldAmplitude:
         E = data["E0"]
         return cls(
             E0=as_quantity(float(E["value"]), str(E.get("unit", "V/m"))),

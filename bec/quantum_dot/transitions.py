@@ -16,17 +16,16 @@ Design goals:
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 from bec.quantum_dot.enums import (
     QDState,
     Transition,
-    TransitionPair,
     TransitionKind,
+    TransitionPair,
 )
-
 
 # ---------- Specs (metadata) ----------
 
@@ -68,8 +67,8 @@ class TransitionRegistry:
     structural maps are consistent at construction time.
     """
 
-    _endpoints: Mapping[Transition, Tuple[QDState, QDState]]
-    _pair_to_dir: Mapping[TransitionPair, Tuple[Transition, Transition]]
+    _endpoints: Mapping[Transition, tuple[QDState, QDState]]
+    _pair_to_dir: Mapping[TransitionPair, tuple[Transition, Transition]]
     _specs: Mapping[TransitionPair, TransitionSpec]
 
     _reverse: Mapping[Transition, Transition]
@@ -79,14 +78,14 @@ class TransitionRegistry:
     def build(
         cls,
         *,
-        endpoints: Mapping[Transition, Tuple[QDState, QDState]],
+        endpoints: Mapping[Transition, tuple[QDState, QDState]],
         pair_to_directed: Mapping[
-            TransitionPair, Tuple[Transition, Transition]
+            TransitionPair, tuple[Transition, Transition]
         ],
         specs: Mapping[TransitionPair, TransitionSpec],
-    ) -> "TransitionRegistry":
-        reverse: Dict[Transition, Transition] = {}
-        tr_to_pair: Dict[Transition, TransitionPair] = {}
+    ) -> TransitionRegistry:
+        reverse: dict[Transition, Transition] = {}
+        tr_to_pair: dict[Transition, TransitionPair] = {}
 
         for pair, (fwd, bwd) in pair_to_directed.items():
             tr_to_pair[fwd] = pair
@@ -129,7 +128,7 @@ class TransitionRegistry:
 
     # ---- core queries ----
 
-    def endpoints(self, tr: Transition) -> Tuple[QDState, QDState]:
+    def endpoints(self, tr: Transition) -> tuple[QDState, QDState]:
         return self._endpoints[tr]
 
     def reverse(self, tr: Transition) -> Transition:
@@ -138,11 +137,11 @@ class TransitionRegistry:
     def as_pair(self, tr: Transition) -> TransitionPair:
         return self._tr_to_pair[tr]
 
-    def directed(self, tp: TransitionPair) -> Tuple[Transition, Transition]:
+    def directed(self, tp: TransitionPair) -> tuple[Transition, Transition]:
         """Return (forward, backward) transitions for a pair."""
         return self._pair_to_dir[tp]
 
-    def pair_endpoints(self, tp: TransitionPair) -> Tuple[QDState, QDState]:
+    def pair_endpoints(self, tp: TransitionPair) -> tuple[QDState, QDState]:
         fwd, _ = self._pair_to_dir[tp]
         return self.endpoints(fwd)
 
@@ -151,7 +150,7 @@ class TransitionRegistry:
             tr_or_pair = self.as_pair(tr_or_pair)
         return self._specs[tr_or_pair]
 
-    def from_states(self, src: QDState, dst: QDState) -> Optional[Transition]:
+    def from_states(self, src: QDState, dst: QDState) -> Transition | None:
         for tr, (a, b) in self._endpoints.items():
             if a == src and b == dst:
                 return tr
@@ -175,7 +174,7 @@ class TransitionRegistry:
 
 # ---------- Default 4-level QD maps ----------
 
-ENDPOINTS: dict[Transition, Tuple[QDState, QDState]] = {
+ENDPOINTS: dict[Transition, tuple[QDState, QDState]] = {
     Transition.G_X1: (QDState.G, QDState.X1),
     Transition.X1_G: (QDState.X1, QDState.G),
     Transition.G_X2: (QDState.G, QDState.X2),
@@ -190,7 +189,7 @@ ENDPOINTS: dict[Transition, Tuple[QDState, QDState]] = {
     Transition.X2_X1: (QDState.X2, QDState.X1),
 }
 
-PAIR_TO_DIRECTED: dict[TransitionPair, Tuple[Transition, Transition]] = {
+PAIR_TO_DIRECTED: dict[TransitionPair, tuple[Transition, Transition]] = {
     TransitionPair.G_X1: (Transition.G_X1, Transition.X1_G),
     TransitionPair.G_X2: (Transition.G_X2, Transition.X2_G),
     TransitionPair.X1_XX: (Transition.X1_XX, Transition.XX_X1),
@@ -234,6 +233,16 @@ class RateKey(str, Enum):
     PH_DEPH_XX = "PH_DEPH_XX"
     PH_RELAX_X1_X2 = "PH_RELAX_X1_X2"
     PH_RELAX_X2_X1 = "PH_RELAX_X2_X1"
+    PH_RELAX_XX_X1 = "PH_RELAX_XX_X1"
+    PH_RELAX_XX_X2 = "PH_RELAX_XX_X2"
+    PH_RELAX_X1_G = "PH_RELAX_X1_G"
+    PH_RELAX_X2_G = "PH_RELAX_X2_G"
+    PH_RELAX_X1_XX = "PH_RELAX_X1_XX"
+    PH_RELAX_X2_XX = "PH_RELAX_X2_XX"
+    PH_RELAX_G_X1 = "PH_RELAX_G_X1"
+    PH_RELAX_G_X2 = "PH_RELAX_G_X2"
+    PH_RELAX_XX_G = "PH_RELAX_XX_G"
+    PH_RELAX_G_XX = "PH_RELAX_G_XX"
 
 
 RAD_RATE_TO_TRANSITION: dict[RateKey, Transition] = {

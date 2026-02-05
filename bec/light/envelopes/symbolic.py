@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional
-
 import math
-import numpy as np
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
 
+import numpy as np
 from smef.core.units import QuantityLike, as_quantity, magnitude
 
 from .base import SerializableEnvelopeU
@@ -37,7 +37,7 @@ class SymbolicEnvelopeU(SerializableEnvelopeU):
             raise ValueError("t_unit must be a non-empty string")
 
         # Normalize params to plain dict[str, float]
-        p: Dict[str, float] = {}
+        p: dict[str, float] = {}
         for k, v in dict(self.params).items():
             p[str(k)] = float(v)
         object.__setattr__(self, "params", p)
@@ -51,13 +51,13 @@ class SymbolicEnvelopeU(SerializableEnvelopeU):
             raise TypeError("EnvelopeU requires unitful time (QuantityLike).")
 
         t_val = float(magnitude(t, self.t_unit))
-        local: Dict[str, Any] = {"t": t_val, "np": np, "math": math}
+        local: dict[str, Any] = {"t": t_val, "np": np, "math": math}
         local.update(self.params)
 
         # Restricted eval (no builtins).
         return float(eval(self.expr, {"__builtins__": {}}, local))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "symbolic",
             "expr": self.expr,
@@ -66,7 +66,7 @@ class SymbolicEnvelopeU(SerializableEnvelopeU):
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SymbolicEnvelopeU":
+    def from_dict(cls, data: dict[str, Any]) -> SymbolicEnvelopeU:
         expr = str(data["expr"])
         t_unit = str(data.get("t_unit", "s"))
         params_in = dict(data.get("params", {}))

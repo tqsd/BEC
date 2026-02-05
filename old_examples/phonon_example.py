@@ -1,22 +1,20 @@
 from __future__ import annotations
 
-import numpy as np
 import matplotlib.pyplot as plt
-
+import numpy as np
 from smef.core.drives.types import DriveSpec
-from smef.core.units import Q
+from smef.core.units import Q, UnitSystem
 from smef.engine import SimulationEngine
-from smef.core.units import UnitSystem
 
 from bec.light.classical.factories import gaussian_field_drive
 from bec.quantum_dot.dot import QuantumDot
 from bec.quantum_dot.enums import QDState
 from bec.quantum_dot.smef.initial_state import rho0_qd_vacuum
-from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.dipole_params import DipoleParams
+from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.phonon_params import (
-    PhononParams,
     PhononModelType,
+    PhononParams,
     PolaronPhononParams,
 )
 

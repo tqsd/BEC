@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Sequence, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -27,7 +28,7 @@ def solve_state_energies_ls(
     states: Sequence[QDState],
     constraints: Sequence[FrameConstraint],
     gauge_state: QDState,
-) -> Dict[QDState, np.ndarray]:
+) -> dict[QDState, np.ndarray]:
     """
     Solve eps_s(t) in rad/s for each state s, with gauge eps[gauge_state]=0.
 
@@ -69,7 +70,7 @@ def solve_state_energies_ls(
     pinvA = np.linalg.pinv(A)
     x = pinvA @ b  # (n, T)
 
-    out: Dict[QDState, np.ndarray] = {gauge_state: np.zeros(T, dtype=float)}
+    out: dict[QDState, np.ndarray] = {gauge_state: np.zeros(T, dtype=float)}
     for st in unknown_states:
         out[st] = x[idx[st], :].copy()
     return out

@@ -3,9 +3,9 @@ import unittest
 from smef.core.units import Q
 
 from bec.quantum_dot.spec.phonon_params import (
-    PhononParams,
-    PhononModelType,
     PhenomenologicalPhononParams,
+    PhononModelType,
+    PhononParams,
     PolaronPhononParams,
 )
 

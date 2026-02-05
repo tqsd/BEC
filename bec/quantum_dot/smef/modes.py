@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any
 
 from smef.core.model.protocols import ModeRegistryProto
 
@@ -26,19 +27,19 @@ class QDModeKey:
     """
 
     kind: str
-    band: Optional[str] = None
-    pol: Optional[str] = None
+    band: str | None = None
+    pol: str | None = None
 
     @staticmethod
-    def qd() -> "QDModeKey":
+    def qd() -> QDModeKey:
         return QDModeKey(kind="qd")
 
     @staticmethod
-    def gx(pol: str) -> "QDModeKey":
+    def gx(pol: str) -> QDModeKey:
         return QDModeKey(kind="mode", band="GX", pol=pol)
 
     @staticmethod
-    def xx(pol: str) -> "QDModeKey":
+    def xx(pol: str) -> QDModeKey:
         return QDModeKey(kind="mode", band="XX", pol=pol)
 
 
@@ -114,7 +115,7 @@ class QDModes(ModeRegistryProto):
         raise KeyError(key)
 
     @property
-    def channels(self) -> Optional[Sequence[Any]]:
+    def channels(self) -> Sequence[Any] | None:
         return ("qd", "GX_H", "GX_V", "XX_H", "XX_V")
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Sequence, Tuple, Optional
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -13,7 +13,7 @@ except Exception:
     _HAS_IPY = False
 
 
-Factor = Tuple[int, str]  # (subsystem_index, local_symbol_str)
+Factor = tuple[int, str]  # (subsystem_index, local_symbol_str)
 
 
 def _latex_escape(s: str) -> str:
@@ -27,7 +27,7 @@ def _latex_escape(s: str) -> str:
     )
 
 
-def qd_symbol_to_latex(sym: str) -> Optional[str]:
+def qd_symbol_to_latex(sym: str) -> str | None:
     # Projectors: proj_G, proj_X1, proj_X2, proj_XX
     if sym.startswith("proj_"):
         st = sym.split("proj_", 1)[1]
@@ -55,7 +55,7 @@ def qd_symbol_to_latex(sym: str) -> Optional[str]:
     return None
 
 
-def mode_symbol_to_latex(sym: str) -> Optional[str]:
+def mode_symbol_to_latex(sym: str) -> str | None:
     if sym == "a":
         return r"\hat{a}"
     if sym == "adag":

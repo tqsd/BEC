@@ -1,19 +1,18 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any
 
 import numpy as np
-
+from smef.core.drives.types import ResolvedDrive
 from smef.core.units import hbar, magnitude
-from smef.core.drives.types import DriveSpec, ResolvedDrive
 
 from bec.quantum_dot.enums import Transition, TransitionPair
-from bec.quantum_dot.transitions import DEFAULT_TRANSITION_REGISTRY
-
 from bec.quantum_dot.smef.drives.context import QDDriveDecodeContext
 from bec.quantum_dot.smef.drives.strength import QDDriveStrengthModel
+from bec.quantum_dot.transitions import DEFAULT_TRANSITION_REGISTRY
 
 
 @dataclass
@@ -29,12 +28,12 @@ class _FakeDrivePayload:
     """
 
     E0: float
-    pol: Optional[np.ndarray] = None
+    pol: np.ndarray | None = None
 
     def E_env_V_m(self, _t_phys_s: float) -> float:
         return float(self.E0)
 
-    def effective_pol(self) -> Optional[np.ndarray]:
+    def effective_pol(self) -> np.ndarray | None:
         if self.pol is None:
             return None
         return np.asarray(self.pol, dtype=complex).reshape(2)

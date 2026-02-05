@@ -3,17 +3,17 @@ from __future__ import annotations
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import matplotlib as mpl
 import numpy as np
-
 from smef.core.units import Q
 from smef.engine import SimulationEngine, UnitSystem
 
+from bec.analysis.stirap_adiabatic import stirap_adiabatic_report_from_drives
 from bec.metrics.metrics import QDDiagnostics
 from bec.quantum_dot.dot import QuantumDot
-from bec.quantum_dot.enums import QDState
+from bec.quantum_dot.enums import QDState, TransitionPair
 from bec.quantum_dot.smef.initial_state import rho0_qd_vacuum
 from bec.quantum_dot.spec.cavity_params import CavityParams
 from bec.quantum_dot.spec.dipole_params import DipoleParams
@@ -45,11 +45,85 @@ class RunCfg:
     label_prefix: str = "qd"
 
 
+def latex_row_from_metrics(
+    *,
+    label: str,
+    m,
+    precision: int = 3,
+    precision_coh: int = 4,
+) -> str:
+    """
+    Return a single LaTeX table row with \\qty{...}{} wrappers.
+
+    Column order matches:
+      Scenario
+      N_early
+      N_late
+      E_N
+      E_N_cond
+      P
+      Lambda
+      |rho_pm,mp|
+      phase [rad]
+    """
+
+    def fmt_num(x: float, p: int) -> str:
+        if not np.isfinite(x):
+            return r"\text{n/a}"
+        return f"{x:.{p}f}"
+
+    def qty(x: float, p: int) -> str:
+        s = fmt_num(x, p)
+        if s == r"\text{n/a}":
+            return s
+        return r"\qty{" + s + r"}{}"
+
+    # Brightness
+    N_early = float(m.counts.n_xx_total)
+    N_late = float(m.counts.n_gx_total)
+
+    # Entanglement
+    E_N = float(m.log_negativity_uncond)
+    E_N_cond = float(m.log_negativity_pol)
+
+    # Purity
+    P = float(m.purity_photons_all)
+
+    # Indistinguishability / overlap
+    Lambda = float(m.meta.get("overlap_abs_avg", float("nan")))
+
+    # Coherence + phase
+    bc = m.meta.get("bell_component", {}) or {}
+    coh = bc.get("coherence_cross", {}) or {}
+    coh_abs = float(coh.get("abs", float("nan")))
+    phase = float(coh.get("phase_rad", float("nan")))
+
+    # Phase in your example uses 1 decimal; keep it separate if you want
+    phase_str = fmt_num(phase, 1)
+    phase_cell = (
+        r"\qty{" + phase_str + r"}{}"
+        if phase_str != r"\text{n/a}"
+        else phase_str
+    )
+
+    return (
+        f"{label}"
+        f"     &{qty(N_early, precision)}"
+        f"&{qty(N_late, precision)}"
+        f"&{qty(E_N, precision)}"
+        f"&{qty(E_N_cond, precision)}"
+        f"&{qty(P, precision)}"
+        f"&{qty(Lambda, precision)}"
+        f"&{qty(coh_abs, precision_coh)}"
+        f"&{phase_cell}\\\\"
+    )
+
+
 @dataclass(frozen=True)
 class SchemeRun:
     label: str
     res: Any
-    payloads: List[Any]
+    payloads: list[Any]
 
 
 def set_pdf_output_defaults() -> None:
@@ -97,7 +171,7 @@ def make_qd() -> QuantumDot:
 
 def make_units_tlist_time_unit(
     cfg: RunCfg,
-) -> Tuple[UnitSystem, np.ndarray, float]:
+) -> tuple[UnitSystem, np.ndarray, float]:
     time_unit_s = float(Q(1.0, "ns").to("s").magnitude)
     units = UnitSystem(time_unit_s=time_unit_s)
     tlist = np.linspace(0.0, float(cfg.t_end_ns), int(cfg.n_points))
@@ -119,9 +193,10 @@ def run_scheme(
     time_unit_s: float,
     amp_scale: float,
     detuning_offset_rad_s: float,
-    scheme_kwargs: Optional[Dict[str, Any]],
+    scheme_kwargs: dict[str, Any] | None,
     audit: bool,
-) -> Tuple[Any, List[Any]]:
+    check_adiabacity: bool = False,
+) -> tuple[Any, list[Any]]:
     factory = get_scheme_factory(scheme)
     specs, payloads = factory(
         qd,
@@ -144,6 +219,26 @@ def run_scheme(
         drives=specs,
         solve_options=_SOLVE_OPTIONS,
     )
+    if check_adiabacity:
+        rep = stirap_adiabatic_report_from_drives(
+            qd=qd,
+            drives=specs,
+            tlist_solver=tlist,
+            time_unit_s=time_unit_s,
+            pair_pump=TransitionPair.G_X1,
+            pair_stokes=TransitionPair.X1_XX,
+            active_rel=1e-2,  # try 1e-2 or 1e-3
+            omega_floor_rel=1e-6,  # fine
+        )
+
+        print(
+            "STIRAP/DPE adiabatic (active window) R_max=",
+            rep.R_max_active,
+            "R_p99=",
+            rep.R_p99_active,
+            "active_thresh=",
+            rep.omega_eff_thresh,
+        )
     return res, list(payloads)
 
 
@@ -157,9 +252,10 @@ def try_run(
     time_unit_s: float,
     amp_scale: float,
     detuning_offset_rad_s: float,
-    scheme_kwargs: Optional[Dict[str, Any]],
+    scheme_kwargs: dict[str, Any] | None,
     audit: bool,
-) -> Optional[SchemeRun]:
+    check_adiabacity: bool = False,
+) -> SchemeRun | None:
     try:
         res, payloads = run_scheme(
             qd=qd,
@@ -171,6 +267,7 @@ def try_run(
             detuning_offset_rad_s=detuning_offset_rad_s,
             scheme_kwargs=scheme_kwargs,
             audit=audit,
+            check_adiabacity=check_adiabacity,
         )
         return SchemeRun(label=label, res=res, payloads=payloads)
     except NotImplementedError as exc:
@@ -193,7 +290,7 @@ def make_a4_style(*, two_column: bool, height_in: float) -> PlotStyle:
 
 def plot_and_save_individual(
     *,
-    runs: List[SchemeRun],
+    runs: list[SchemeRun],
     units: UnitSystem,
     qd: QuantumDot,
     out_dir: Path,
@@ -219,9 +316,9 @@ def plot_and_save_individual(
 
 def plot_and_save_grid(
     *,
-    runs: List[SchemeRun],
+    runs: list[SchemeRun],
     units: UnitSystem,
-    qds: List[QuantumDot],
+    qds: list[QuantumDot],
     out_dir: Path,
     style_grid: PlotStyle,
     cfg_grid: PlotConfig,
@@ -250,7 +347,7 @@ def plot_and_save_grid(
 
 
 def diagnostics(
-    *, runs: List[SchemeRun], qd: QuantumDot, units: UnitSystem
+    *, runs: list[SchemeRun], qd: QuantumDot, units: UnitSystem
 ) -> None:
     diag = QDDiagnostics()
     for r in runs:
@@ -295,7 +392,7 @@ def main() -> None:
     qd = make_qd()
     units, tlist, time_unit_s = make_units_tlist_time_unit(cfg)
 
-    runs: List[SchemeRun] = []
+    runs: list[SchemeRun] = []
     for r in (
         try_run(
             qd=qd,
@@ -304,7 +401,7 @@ def main() -> None:
             label="tpe",
             tlist=tlist,
             time_unit_s=time_unit_s,
-            amp_scale=4.0,
+            amp_scale=1.0,
             detuning_offset_rad_s=detuning_offset_rad_s,
             scheme_kwargs={},
             audit=True,
@@ -320,6 +417,7 @@ def main() -> None:
             detuning_offset_rad_s=detuning_offset_rad_s,
             scheme_kwargs=bichromatic_kwargs,
             audit=True,
+            check_adiabacity=True,
         ),
         try_run(
             qd=qd,
@@ -340,13 +438,13 @@ def main() -> None:
     if not runs:
         raise RuntimeError("No runs produced.")
 
-    style_grid = make_a4_style(two_column=True, height_in=6.0)
+    style_grid = make_a4_style(two_column=True, height_in=5.0)
     style_single = make_a4_style(two_column=False, height_in=5.5)
 
     cfg_grid = PlotConfig(
         title="",
         ncols=3,
-        column_titles=["TPE", "STIRAP", "ARP"],
+        column_titles=["TPE", "DPE", "ARP"],
     )
 
     plot_and_save_individual(
@@ -365,6 +463,19 @@ def main() -> None:
         cfg_grid=cfg_grid,
     )
     diagnostics(runs=runs, qd=qd, units=units)
+
+    print("\n--- LaTeX table rows (paste directly) ---\n")
+
+    for r, scen_label in zip(
+        runs,
+        [
+            r"TPE $\pi$-pulse",
+            r"DPE",
+            r"ARP",
+        ],
+    ):
+        m = QDDiagnostics().compute(qd, r.res, units=units)
+        print(latex_row_from_metrics(label=scen_label, m=m))
 
 
 if __name__ == "__main__":

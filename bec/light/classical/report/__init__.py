@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+from smef.core.units import Q, QuantityLike, c, magnitude
 
-from smef.core.units import QuantityLike, Q, c, magnitude
-
-from bec.light.envelopes.registry import envelope_to_json
 from bec.light.core.polarization import JonesMatrix, JonesState
+from bec.light.envelopes.registry import envelope_to_json
 
 from ..field_drive import ClassicalFieldDriveU
 
@@ -24,8 +24,8 @@ def _safe_envelope_type(env: Any) -> str:
     return type(env).__name__
 
 
-def _envelope_params(env: Any) -> Dict[str, str]:
-    out: Dict[str, str] = {}
+def _envelope_params(env: Any) -> dict[str, str]:
+    out: dict[str, str] = {}
 
     for name in ("t0", "sigma"):
         if hasattr(env, name):
@@ -54,7 +54,7 @@ def _t_phys_from_solver(t_solver: float, time_unit_s: float) -> QuantityLike:
     return Q(float(t_solver) * float(time_unit_s), "s")
 
 
-def _infer_lambda_from_omega(omega_rad_s: float) -> Optional[QuantityLike]:
+def _infer_lambda_from_omega(omega_rad_s: float) -> QuantityLike | None:
     if omega_rad_s <= 0.0:
         return None
     f_hz = omega_rad_s / (2.0 * np.pi)
@@ -65,50 +65,50 @@ def _infer_lambda_from_omega(omega_rad_s: float) -> Optional[QuantityLike]:
 @dataclass(frozen=True)
 class DriveReportData:
     # Identity
-    label: Optional[str]
+    label: str | None
     drive_type: str
-    preferred_kind: Optional[str]
+    preferred_kind: str | None
 
     # Envelope
     envelope_type: str
-    envelope_params: Dict[str, str]
+    envelope_params: dict[str, str]
 
     # Amplitude
     E0_V_m: float
 
     # Carrier
     has_carrier: bool
-    omega0_rad_s: Optional[float]
+    omega0_rad_s: float | None
     delta_omega_repr: str
-    phi0: Optional[float]
+    phi0: float | None
 
     # Polarization
     pol_state_repr: str
     pol_transform_repr: str
-    effective_pol: Optional[np.ndarray]
+    effective_pol: np.ndarray | None
 
     # Sampled at t_eval (solver)
     time_unit_s: float
-    sample_window: Tuple[float, float]
+    sample_window: tuple[float, float]
     t_eval_solver: float
     t_eval_phys_s: float
 
     E_env_eval_V_m: float
-    omega_L_eval_rad_s: Optional[float]
-    omega_L_eval_solver: Optional[float]
-    lambda_inferred_nm: Optional[float]
+    omega_L_eval_rad_s: float | None
+    omega_L_eval_solver: float | None
+    lambda_inferred_nm: float | None
 
     # Optional sampled curve over solver window
-    t_solver: Optional[np.ndarray]
-    E_env_curve_V_m: Optional[np.ndarray]
+    t_solver: np.ndarray | None
+    E_env_curve_V_m: np.ndarray | None
 
 
 def compute_drive_report_data(
     drive: ClassicalFieldDriveU,
     *,
     time_unit_s: float,
-    t_eval_solver: Optional[float] = None,
-    sample_window: Tuple[float, float] = (0.0, 100.0),
+    t_eval_solver: float | None = None,
+    sample_window: tuple[float, float] = (0.0, 100.0),
     sample_points: int = 1001,
     include_curve: bool = True,
 ) -> DriveReportData:
@@ -117,7 +117,7 @@ def compute_drive_report_data(
     # Choose eval time
     t_min, t_max = float(sample_window[0]), float(sample_window[1])
     if t_eval_solver is None:
-        t_guess: Optional[float] = None
+        t_guess: float | None = None
         if hasattr(env, "t0"):
             try:
                 t0_s = float(magnitude(getattr(env, "t0"), "s"))
@@ -188,8 +188,8 @@ def compute_drive_report_data(
     eff_pol = drive.effective_pol()
 
     # Optional curve
-    t_arr: Optional[np.ndarray]
-    y_arr: Optional[np.ndarray]
+    t_arr: np.ndarray | None
+    y_arr: np.ndarray | None
     if include_curve:
         t_arr = np.linspace(t_min, t_max, int(sample_points), dtype=float)
         y_arr = np.empty_like(t_arr, dtype=float)

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence, Tuple
+from typing import Any
 
 import numpy as np
-
 from smef.core.ir.protocols import OpMaterializeContextProto
 
 from bec.quantum_dot.smef.symbols import (

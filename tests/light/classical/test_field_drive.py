@@ -1,7 +1,6 @@
 import unittest
 
 import numpy as np
-
 from smef.core.units import Q, magnitude
 
 from bec.light.classical.amplitude import FieldAmplitude

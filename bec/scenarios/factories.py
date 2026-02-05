@@ -1,18 +1,23 @@
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple
+from typing import Any, Literal
 
-
-from smef.core.units import Q
-from bec.light.classical.carrier import Carrier
 from smef.core.drives.types import DriveSpec
+from smef.core.units import Q
+
+from bec.light.classical.carrier import Carrier
 from bec.quantum_dot.enums import TransitionPair
 from bec.quantum_dot.factories.drives import make_gaussian_field_drive_pi
+
 from .types import DriveFactory, SchemeKind
 
 
 def _apply_common_error_knobs(
-    payload: Any, *, amp_scale: float, detuning_offset_rad_s: float
+    payload: Any,
+    *,
+    amp_scale: float,
+    detuning_offset_rad_s: float,
+    detuning_mode: Literal["delta_omega", "omega0"] = "delta_omega",
 ) -> Any:
 
     p = payload
@@ -28,7 +33,6 @@ def _apply_common_error_knobs(
         ):
             p.set_amp_scale(float(amp_scale))
 
-    # detuning offset: shift omega_L(t) by constant detuning_offset_rad_s
     dw = float(detuning_offset_rad_s)
     if abs(dw) > 0.0:
         if (
@@ -37,25 +41,31 @@ def _apply_common_error_knobs(
             and Carrier is not None
         ):
             car = p.carrier
-            d = car.delta_omega
 
-            if callable(d):
+            if detuning_mode == "omega0":
+                omega0_new = car.omega0 + Q(dw, "rad/s")
+                delta_omega_new = car.delta_omega
+            elif detuning_mode == "delta_omega":
+                omega0_new = car.omega0
+                d = car.delta_omega
+                if callable(d):
 
-                def d_new(t):
-                    return d(t) + Q(dw, "rad/s")
+                    def d_new(t):
+                        return d(t) + Q(dw, "rad/s")
 
-                delta_omega_new = d_new
+                    delta_omega_new = d_new
+                else:
+                    delta_omega_new = d + Q(dw, "rad/s")
             else:
-                delta_omega_new = d + Q(dw, "rad/s")
+                raise ValueError("Unknown detuning_mode: %r" % detuning_mode)
 
             car_new = Carrier(
-                omega0=car.omega0,
+                omega0=omega0_new,
                 delta_omega=delta_omega_new,
                 phi0=float(car.phi0),
                 label=car.label,
             )
 
-            # rebuild drive (ClassicalFieldDriveU is frozen)
             p = type(p)(
                 envelope=p.envelope,
                 amplitude=p.amplitude,
@@ -66,7 +76,6 @@ def _apply_common_error_knobs(
                 label=getattr(p, "label", None),
             )
         else:
-            # fallback to old setter convention
             if hasattr(p, "set_detuning_offset_rad_s") and callable(
                 getattr(p, "set_detuning_offset_rad_s")
             ):
@@ -82,7 +91,7 @@ def make_tpe_drive_specs(
     amp_scale: float = 1.0,
     detuning_offset_rad_s: float = 0.0,
     label: str = "tpe",
-) -> Tuple[List[Any], List[Any]]:
+) -> tuple[list[Any], list[Any]]:
     """
     TPE: single 2ph drive on G<->XX.
 
@@ -109,10 +118,11 @@ def make_tpe_drive_specs(
         chirp_rate_rad_s2=None,
     )
 
-    _apply_common_error_knobs(
+    payload = _apply_common_error_knobs(
         payload,
         amp_scale=float(amp_scale),
         detuning_offset_rad_s=float(detuning_offset_rad_s),
+        detuning_mode="omega0",
     )
 
     specs = [DriveSpec(payload=payload, drive_id=payload.label or label)]
@@ -127,15 +137,15 @@ def make_arp_drive_specs(
     detuning_offset_rad_s: float = 0.0,
     label: str = "arp",
     # Chirp selection
-    chirp_kind: Optional[str] = None,  # None | "linear" | "tanh" | "constant"
-    chirp_rate_rad_s2: Optional[float] = None,  # linear chirp
-    chirp_delta_rad_s: Optional[float] = None,  # constant detuning
-    tanh_delta_rad_s: Optional[float] = None,  # tanh amplitude
-    tanh_tau_ns: Optional[float] = None,  # tanh timescale (ns)
+    chirp_kind: str | None = None,  # None | "linear" | "tanh" | "constant"
+    chirp_rate_rad_s2: float | None = None,  # linear chirp
+    chirp_delta_rad_s: float | None = None,  # constant detuning
+    tanh_delta_rad_s: float | None = None,  # tanh amplitude
+    tanh_tau_ns: float | None = None,  # tanh timescale (ns)
     # Pulse overrides
-    sigma_ns: Optional[float] = None,
-    t0_ns: Optional[float] = None,
-) -> Tuple[List[Any], List[Any]]:
+    sigma_ns: float | None = None,
+    t0_ns: float | None = None,
+) -> tuple[list[Any], list[Any]]:
 
     # Per-scheme overrides (fallback to cfg)
     sigma = float(cfg.sigma_ns) if sigma_ns is None else float(sigma_ns)
@@ -198,8 +208,9 @@ def _set_carrier_omega(
     - delta_omega is preserved from the existing carrier if present (constant QuantityLike or callable profile).
     - phi0 is preserved and incremented by rel_phase_rad (dimensionless radians).
     """
-    from bec.light.classical.carrier import Carrier
     from smef.core.units import Q, as_quantity
+
+    from bec.light.classical.carrier import Carrier
 
     # Convert omega0 into a unitful quantity [rad/s]
     omega0_q = as_quantity(omega0_rad_s, "rad/s")
@@ -258,6 +269,7 @@ def make_bichromatic_drive_specs(
 ):
     from smef.core.drives.types import DriveSpec
     from smef.core.units import Q
+
     from bec.quantum_dot.enums import TransitionPair
     from bec.quantum_dot.factories.drives import make_gaussian_field_drive_pi
 
@@ -304,12 +316,10 @@ def make_bichromatic_drive_specs(
         omega_xx_ref = float(qd.derived_view.omega_ref_rad_s(pair_xx))
 
         omega1 = (
-            omega_gx_ref + float(dpe_delta_rad_s) +
-            float(detuning_offset_rad_s)
+            omega_gx_ref + float(dpe_delta_rad_s) + float(detuning_offset_rad_s)
         )
         omega2 = (
-            omega_xx_ref - float(dpe_delta_rad_s) +
-            float(detuning_offset_rad_s)
+            omega_xx_ref - float(dpe_delta_rad_s) + float(detuning_offset_rad_s)
         )
 
         payload1 = _set_carrier_omega(payload1, omega1, rel_phase_rad=0.0)

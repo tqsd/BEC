@@ -6,14 +6,14 @@ import unittest
 from smef.core.units import Q
 
 from bec.quantum_dot.enums import RateKey
-from bec.quantum_dot.transitions import DEFAULT_TRANSITION_REGISTRY
+from bec.quantum_dot.models.phonon_model import PolaronLAPhononModel
 from bec.quantum_dot.spec.phonon_params import (
-    PhononParams,
     PhononCouplings,
     PhononModelKind,
+    PhononParams,
     PolaronLAParams,
 )
-from bec.quantum_dot.models.phonon_model import PolaronLAPhononModel
+from bec.quantum_dot.transitions import DEFAULT_TRANSITION_REGISTRY
 
 
 class TestPhononParams(unittest.TestCase):

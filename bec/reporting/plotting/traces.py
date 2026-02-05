@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -10,13 +11,13 @@ import numpy as np
 class DriveSeries:
     label: str
     t_s: np.ndarray
-    E_env_V_m: Optional[np.ndarray] = None
-    omega_L_rad_s: Optional[np.ndarray] = None
-    delta_omega_rad_s: Optional[np.ndarray] = None
-    Omega_rad_s: Optional[np.ndarray] = None  # drive-implied mu*E/hbar
+    E_env_V_m: np.ndarray | None = None
+    omega_L_rad_s: np.ndarray | None = None
+    delta_omega_rad_s: np.ndarray | None = None
+    Omega_rad_s: np.ndarray | None = None  # drive-implied mu*E/hbar
 
     # Optional, extracted from carrier.omega0 when available:
-    wavelength_nm: Optional[float] = None
+    wavelength_nm: float | None = None
 
 
 @dataclass(frozen=True)

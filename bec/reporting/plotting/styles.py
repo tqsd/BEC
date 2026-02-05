@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Dict, List, Tuple
 
 import matplotlib as mpl
-
 
 # ---- Page presets (inches) ----
 A4_WIDTH_IN = 8.27
@@ -22,7 +20,7 @@ class PlotStyle:
     latex_preamble: str = r"\usepackage{siunitx}"
 
     # Figure geometry (inches)
-    figsize: Tuple[float, float] = (A4_TEXT_WIDTH_IN, 5.5)
+    figsize: tuple[float, float] = (A4_TEXT_WIDTH_IN, 5.5)
 
     # Grid / aesthetics
     grid_alpha: float = 0.3
@@ -34,16 +32,16 @@ class PlotStyle:
     legend_linewidth: float = 0.9
 
     # QD population styling
-    qd_labels: List[str] = field(default_factory=list)
-    qd_labels_tex: Dict[str, str] = field(default_factory=dict)
-    qd_colors: Dict[str, str] = field(default_factory=dict)
-    qd_styles: Dict[str, object] = field(default_factory=dict)
-    qd_widths: Dict[str, float] = field(default_factory=dict)
-    qd_alphas: Dict[str, float] = field(default_factory=dict)
+    qd_labels: list[str] = field(default_factory=list)
+    qd_labels_tex: dict[str, str] = field(default_factory=dict)
+    qd_colors: dict[str, str] = field(default_factory=dict)
+    qd_styles: dict[str, object] = field(default_factory=dict)
+    qd_widths: dict[str, float] = field(default_factory=dict)
+    qd_alphas: dict[str, float] = field(default_factory=dict)
 
     # Palettes (drives + outputs)
-    palette_drives: List[str] = field(default_factory=list)
-    palette_outputs: List[str] = field(default_factory=list)
+    palette_drives: list[str] = field(default_factory=list)
+    palette_outputs: list[str] = field(default_factory=list)
 
     # Dotted markers (used by some panels)
     dotted_marker: str = "o"
@@ -53,16 +51,16 @@ class PlotStyle:
 
     # ---- convenience builders ----
 
-    def with_figsize(self, width_in: float, height_in: float) -> "PlotStyle":
+    def with_figsize(self, width_in: float, height_in: float) -> PlotStyle:
         return replace(self, figsize=(float(width_in), float(height_in)))
 
-    def a4_single_column(self, height_in: float = 5.5) -> "PlotStyle":
+    def a4_single_column(self, height_in: float = 5.5) -> PlotStyle:
         return self.with_figsize(A4_TEXT_WIDTH_IN, float(height_in))
 
-    def a4_two_column(self, height_in: float = 6.0) -> "PlotStyle":
+    def a4_two_column(self, height_in: float = 6.0) -> PlotStyle:
         return self.with_figsize(2.0 * A4_TEXT_WIDTH_IN, float(height_in))
 
-    def scale(self, factor: float) -> "PlotStyle":
+    def scale(self, factor: float) -> PlotStyle:
         f = float(factor)
         if f <= 0.0:
             raise ValueError("factor must be > 0")

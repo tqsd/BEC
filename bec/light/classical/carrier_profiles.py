@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
-
-from smef.core.units import QuantityLike, Q, as_quantity, magnitude
+from smef.core.units import Q, QuantityLike, as_quantity, magnitude
 
 # A frequency profile returns delta_omega(t) in rad/s (unitful).
 OmegaFn = Callable[[QuantityLike], QuantityLike]

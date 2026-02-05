@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Dict, Union
 
-from smef.core.units import QuantityLike, Q, c, h, hbar, magnitude
+from smef.core.units import Q, QuantityLike, c, h, hbar, magnitude
 
 from bec.core.units import as_eV
 from bec.quantum_dot.enums import QDState
@@ -11,7 +10,7 @@ from bec.quantum_dot.enums import QDState
 
 class EnergiesMixin:
     @cached_property
-    def energies(self) -> Dict[str, QuantityLike]:
+    def energies(self) -> dict[str, QuantityLike]:
         el = self.qd.energy
         return {
             QDState.G: Q(0.0, "eV"),
@@ -21,7 +20,7 @@ class EnergiesMixin:
         }
 
     @cached_property
-    def transition_energy(self) -> Dict[object, QuantityLike]:
+    def transition_energy(self) -> dict[object, QuantityLike]:
         # Local import to avoid cycles
         from bec.quantum_dot.enums import Transition
 

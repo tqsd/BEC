@@ -1,9 +1,8 @@
 import unittest
 
 import numpy as np
-
-from smef.core.ir.ops import EmbeddedKron, LocalSymbolOp, OpExpr
 from smef.core.ir.materialize import materialize_op_expr
+from smef.core.ir.ops import EmbeddedKron, LocalSymbolOp, OpExpr
 
 from bec.quantum_dot.enums import QDState, Transition
 from bec.quantum_dot.smef.materializer import default_qd_materializer

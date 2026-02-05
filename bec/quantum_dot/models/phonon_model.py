@@ -1,29 +1,35 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, Mapping, Optional, Protocol
-
 import math
+from dataclasses import dataclass, field
+from typing import Protocol
+
 import numpy as np
 from scipy.integrate import quad
-
 from smef.core.units import (
     Q,
     QuantityLike,
     as_quantity,
+)
+from smef.core.units import (
     hbar as _hbar,
+)
+from smef.core.units import (
     kB as _kB,
 )
 
-from bec.quantum_dot.enums import QDState, RateKey, Transition
-from bec.quantum_dot.transitions import (
-    TransitionRegistry,
-    DEFAULT_TRANSITION_REGISTRY,
-)
+from bec.quantum_dot.enums import QDState, Transition
+from bec.quantum_dot.spec.energy_structure import EnergyStructure
+from bec.quantum_dot.spec.exciton_mixing_params import ExcitonMixingParams
 from bec.quantum_dot.spec.phonon_params import (
     PhononModelKind,
     PhononParams,
     SpectralDensityKind,
+)
+from bec.quantum_dot.transitions import (
+    DEFAULT_TRANSITION_REGISTRY,
+    RateKey,
+    TransitionRegistry,
 )
 
 
@@ -78,10 +84,142 @@ class PhononOutputs:
     - All rates are returned unitful (QuantityLike in 1/s).
     """
 
-    rates: Dict[RateKey, QuantityLike] = field(default_factory=dict)
-    b_polaron: Dict[Transition, float] = field(default_factory=dict)
+    rates: dict[RateKey, QuantityLike] = field(default_factory=dict)
+    b_polaron: dict[Transition, float] = field(default_factory=dict)
     eid: PolaronEIDConfig = field(default_factory=PolaronEIDConfig)
-    polaron_rates: Optional[PolaronDriveRates] = None
+    polaron_rates: PolaronDriveRates | None = None
+
+
+@dataclass(frozen=True)
+class _BathFftCache:
+    # tau grid (uniform)
+    tau_s: np.ndarray
+    dtau_s: float
+    # omega grid for rfft (rad/s), non-negative
+    omega_grid_rad_s: np.ndarray
+    # dtau * FFT(f) approximates integral of f(t) exp(-i omega t) dt
+    dtau_rfft_G: np.ndarray  # complex
+    dtau_rfft_one_minus: np.ndarray  # complex (will be real-ish if input real)
+
+
+def _interp_complex(
+    x: np.ndarray, xp: np.ndarray, fp: np.ndarray
+) -> np.ndarray:
+    # linear interpolation for complex arrays using real+imag parts
+    xr = np.interp(x, xp, fp.real)
+    xi = np.interp(x, xp, fp.imag)
+    return xr + 1j * xi
+
+
+def _build_fft_cache(
+    tau_s: np.ndarray,
+    G_tau: np.ndarray,
+    one_minus: np.ndarray,
+) -> _BathFftCache:
+    tau = np.asarray(tau_s, dtype=float).reshape(-1)
+    if tau.size < 2:
+        raise ValueError("tau grid too small")
+
+    dtau = float(tau[1] - tau[0])
+    if dtau <= 0.0:
+        raise ValueError("tau step must be > 0")
+
+    diffs = np.diff(tau)
+    if not np.allclose(diffs, dtau, rtol=1e-6, atol=0.0):
+        raise ValueError("tau grid must be uniform for FFT method")
+
+    N = int(tau.size)
+
+    G = np.asarray(G_tau, dtype=complex).reshape(-1)
+    om = np.asarray(one_minus, dtype=float).reshape(-1)
+
+    if G.size != N or om.size != N:
+        raise ValueError("cache arrays must match tau size")
+
+    # rfft frequencies in cycles/s -> rad/s
+    freq_hz = np.fft.rfftfreq(N, d=dtau)
+    omega_grid = 2.0 * np.pi * freq_hz
+
+    # rfft does not support complex input: do real+imag separately and recombine.
+    G_re = np.ascontiguousarray(G.real, dtype=float)
+    G_im = np.ascontiguousarray(G.imag, dtype=float)
+    om_re = np.ascontiguousarray(om, dtype=float)
+
+    F_re = np.fft.rfft(G_re)
+    F_im = np.fft.rfft(G_im)
+    dtau_rfft_G = dtau * (F_re + 1j * F_im)
+
+    dtau_rfft_one_minus = dtau * np.fft.rfft(om_re)
+
+    return _BathFftCache(
+        tau_s=tau,
+        dtau_s=dtau,
+        omega_grid_rad_s=omega_grid,
+        dtau_rfft_G=dtau_rfft_G,
+        dtau_rfft_one_minus=dtau_rfft_one_minus,
+    )
+
+
+def _re_int_exp_iwt_from_fft(
+    w_rad_s: np.ndarray,
+    *,
+    fft_cache: _BathFftCache,
+) -> np.ndarray:
+    """
+    Approximate Re int_0^T exp(+i w t) G(t) dt.
+
+    We have dtau*rfft(G) ~ int_0^T G(t) exp(-i w t) dt
+    So for exp(+i w t): use conjugate:
+      int G(t) exp(+i w t) dt ~ conj( int G(t) exp(-i w t) dt )
+    """
+    w = np.asarray(w_rad_s, dtype=float).reshape(-1)
+    wg = fft_cache.omega_grid_rad_s
+    F = fft_cache.dtau_rfft_G
+
+    w_clip = np.clip(w, float(wg[0]), float(wg[-1]))
+    val_minus = _interp_complex(w_clip, wg, F)
+    val_plus = np.conjugate(val_minus)
+    return np.real(val_plus).astype(float)
+
+
+def _int_cos_from_fft(
+    w_rad_s: np.ndarray,
+    *,
+    fft_cache: _BathFftCache,
+) -> np.ndarray:
+    """
+    Approximate int_0^T one_minus(t) cos(w t) dt
+    = Re int one_minus(t) exp(+i w t) dt
+    """
+    w = np.asarray(w_rad_s, dtype=float).reshape(-1)
+    wg = fft_cache.omega_grid_rad_s
+    F = fft_cache.dtau_rfft_one_minus
+
+    w_clip = np.clip(w, float(wg[0]), float(wg[-1]))
+    val_minus = _interp_complex(w_clip, wg, F)
+    val_plus = np.conjugate(val_minus)
+    return np.real(val_plus).astype(float)
+
+
+@dataclass(frozen=True)
+class _BathCache:
+    tau_s: np.ndarray  # shape (Nt,)
+    G_tau: np.ndarray  # shape (Nt,) complex
+    # shape (Nt,) real (for cross-deph if desired)
+    one_minus_exp_minus_phi: np.ndarray
+
+
+_GLOBAL_BATH_CACHE: Dict[
+    Tuple[float, float, float, int, float, float, int], "_BathCache"
+] = {}
+
+
+@dataclass(frozen=True)
+class _BathCache:
+    tau_s: np.ndarray  # shape (Nt,)
+    G_tau: np.ndarray  # shape (Nt,) complex
+    one_minus_exp_minus_phi: np.ndarray  # shape (Nt,) float
+    fft: Optional["_BathFftCache"] = None
 
 
 @dataclass(frozen=True)
@@ -89,7 +227,6 @@ class PolaronDriveRates:
     """
     Float-only helpers for drive-dependent phonon rates.
 
-    This lives in the phonon model layer so emitters don't implement physics.
     Rates are returned in 1/s (physical units as floats).
     """
 
@@ -97,6 +234,224 @@ class PolaronDriveRates:
     alpha_s2: float
     omega_c_rad_s: float
     temperature_K: float
+
+    _bath_cache: object = None
+
+    def _ensure_bath_cache(
+        self,
+        *,
+        Nt: int = 4096,
+        x_max: float = 8.0,
+        tau_max_factor: float = 8.0,
+    ) -> _BathCache:
+        # First: instance cache
+        if self._bath_cache is not None:
+            return self._bath_cache  # type: ignore[return-value]
+
+        alpha = float(self.alpha_s2)
+        wc = float(self.omega_c_rad_s)
+        T = float(self.temperature_K)
+
+        # Disabled / degenerate => trivial cache
+        if (not self.enabled) or alpha <= 0.0 or wc <= 0.0:
+            tau_s = np.linspace(0.0, 1.0, 8, dtype=float)
+            G_tau = np.zeros_like(tau_s, dtype=complex)
+            om = np.zeros_like(tau_s, dtype=float)
+            cache = _BathCache(
+                tau_s=tau_s,
+                G_tau=G_tau,
+                one_minus_exp_minus_phi=om,
+                fft=_build_fft_cache(tau_s, G_tau, om),
+            )
+            object.__setattr__(self, "_bath_cache", cache)
+            return cache
+
+        # Second: global cache (critical for sweeps that rebuild QD objects)
+        # Note: round floats to make keys stable against tiny print/convert noise.
+        key = (
+            float(f"{alpha:.16e}"),
+            float(f"{wc:.16e}"),
+            float(f"{T:.16e}"),
+            int(Nt),
+            float(f"{x_max:.16e}"),
+            float(f"{tau_max_factor:.16e}"),
+            4096,  # Nx (kept as constant below)
+        )
+        cached = _GLOBAL_BATH_CACHE.get(key)
+        if cached is not None:
+            object.__setattr__(self, "_bath_cache", cached)
+            return cached
+
+        # ---------------- Build bath ----------------
+
+        Nx = 4096
+        x = np.linspace(0.0, float(x_max), Nx, dtype=float)
+        omega = wc * x  # rad/s
+
+        # J(omega)/omega^2 = alpha * omega * exp(-x^2)
+        jw_over_w2 = alpha * omega * np.exp(-(x * x))
+
+        # coth(hbar*omega/(2 kB T))
+        if T <= 0.0:
+            coth = np.ones_like(omega, dtype=float)
+        else:
+            xarg_q = (_hbar * Q(omega, "rad/s")) / (2.0 * _kB * Q(T, "K"))
+            xarg = np.asarray(xarg_q.to_base_units().magnitude, dtype=float)
+            coth = self._coth(xarg)
+
+        # tau grid: correlations decay on scale ~ 1/wc
+        tau_max_s = float(tau_max_factor) / wc
+        tau_s = np.linspace(0.0, tau_max_s, int(Nt), dtype=float)
+
+        # Build phi(tau) for all tau using broadcasting
+        # This is still the heavy step, but with global caching it happens
+        # once per (alpha, wc, T, Nt, x_max, tau_max_factor).
+        wt = omega[None, :] * tau_s[:, None]
+        cos_wt = np.cos(wt)
+        sin_wt = np.sin(wt)
+
+        # Integral over omega grid expressed in x, with d omega = wc d x:
+        re_phi = (
+            np.trapezoid(
+                jw_over_w2[None, :] * coth[None, :] * cos_wt, x, axis=1
+            )
+            * wc
+        )
+        im_phi = -np.trapezoid(jw_over_w2[None, :] * sin_wt, x, axis=1) * wc
+        phi = re_phi + 1j * im_phi
+
+        G_tau = np.exp(phi) - 1.0
+
+        # Real-only variant used for cosine integral
+        one_minus_exp_minus_phi = 1.0 - np.exp(-re_phi)
+
+        fft = _build_fft_cache(tau_s, G_tau, one_minus_exp_minus_phi)
+
+        cache = _BathCache(
+            tau_s=tau_s,
+            G_tau=np.asarray(G_tau, dtype=complex),
+            one_minus_exp_minus_phi=np.asarray(
+                one_minus_exp_minus_phi, dtype=float
+            ),
+            fft=fft,
+        )
+
+        _GLOBAL_BATH_CACHE[key] = cache
+        object.__setattr__(self, "_bath_cache", cache)
+        return cache
+
+    def gamma_dressed_rates_1_s(
+        self,
+        *,
+        omega_solver: np.ndarray,
+        detuning_rad_s: np.ndarray,
+        time_unit_s: float,
+        b_polaron: float = 1.0,
+        Nt: int = 4096,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Returns (gamma_down, gamma_up, gamma_cd) in 1/s as float arrays.
+
+        Fast path:
+        - Uses an FFT-based lookup of int exp(+- i w tau) G(tau) d tau
+        - Uses an FFT-based lookup of int cos(w tau) one_minus(tau) d tau
+        """
+        if not bool(self.enabled):
+            n = int(np.asarray(detuning_rad_s).size)
+            z = np.zeros((n,), dtype=float)
+            return z, z, z
+
+        s = float(time_unit_s)
+        if s <= 0.0:
+            raise ValueError("time_unit_s must be > 0")
+
+        omega_solver = np.asarray(omega_solver, dtype=complex).reshape(-1)
+        detuning_rad_s = np.asarray(detuning_rad_s, dtype=float).reshape(-1)
+        if omega_solver.size != detuning_rad_s.size:
+            raise ValueError(
+                "detuning_rad_s must have same length as omega_solver"
+            )
+
+        cache = self._ensure_bath_cache(Nt=Nt)
+        if cache.fft is None:
+            # Should not happen because we always build FFT now,
+            # but keep a safe fallback.
+            tau_s = cache.tau_s
+            G_tau = cache.G_tau
+            one_minus = cache.one_minus_exp_minus_phi
+
+            wstar = self.omega_star_rad_s(
+                omega_solver,
+                detuning_rad_s,
+                time_unit_s=s,
+                b_polaron=b_polaron,
+            )
+            OmR = self._omega_rabi_rad_s(
+                omega_solver,
+                time_unit_s=s,
+                b_polaron=b_polaron,
+            )
+            pref = 0.5 * (OmR * OmR)
+
+            re_pos = self._re_int_exp_iwt_G(wstar, tau_s=tau_s, G_tau=G_tau)
+            re_neg = self._re_int_exp_iwt_G(-wstar, tau_s=tau_s, G_tau=G_tau)
+
+            g_down = pref * re_pos
+            g_up = pref * re_neg
+
+            phase = tau_s[:, None] * wstar[None, :]
+            cos_wt = np.cos(phase)
+            val_cd = np.trapezoid(one_minus[:, None] * cos_wt, tau_s, axis=0)
+            g_cd = pref * np.real(val_cd).astype(float)
+
+            return (
+                np.maximum(g_down, 0.0),
+                np.maximum(g_up, 0.0),
+                np.maximum(g_cd, 0.0),
+            )
+
+        fft = cache.fft
+
+        wstar = self.omega_star_rad_s(
+            omega_solver,
+            detuning_rad_s,
+            time_unit_s=s,
+            b_polaron=b_polaron,
+        )
+
+        OmR = self._omega_rabi_rad_s(
+            omega_solver,
+            time_unit_s=s,
+            b_polaron=b_polaron,
+        )
+        pref = 0.5 * (OmR * OmR)
+
+        # Compute both Re int exp(+i w t) G(t) dt and Re int exp(-i w t) G(t) dt
+        # with a single interpolation (val_minus) and conjugation.
+        w = np.asarray(wstar, dtype=float).reshape(-1)
+        wg = fft.omega_grid_rad_s
+        F = fft.dtau_rfft_G
+
+        w_clip = np.clip(w, float(wg[0]), float(wg[-1]))
+        # int G(t) exp(-i w t) dt
+        val_minus = _interp_complex(w_clip, wg, F)
+        # int G(t) exp(+i w t) dt
+        val_plus = np.conjugate(val_minus)
+
+        re_pos = np.real(val_plus).astype(float)
+        re_neg = np.real(val_minus).astype(float)
+
+        g_down = pref * re_pos
+        g_up = pref * re_neg
+
+        # Cross-deph from FFT of one_minus:
+        cd_int = _int_cos_from_fft(w_clip, fft_cache=fft)
+        g_cd = pref * cd_int
+
+        g_down = np.maximum(g_down, 0.0)
+        g_up = np.maximum(g_up, 0.0)
+        g_cd = np.maximum(g_cd, 0.0)
+        return g_down, g_up, g_cd
 
     def _j_of_w(self, w: np.ndarray) -> np.ndarray:
         w = np.asarray(w, dtype=float)
@@ -141,71 +496,108 @@ class PolaronDriveRates:
     def gamma_eid_1_s(
         self,
         omega_solver: np.ndarray,
-        detuning_rad_s: np.ndarray,
+        omega_star_rad_s: np.ndarray,
         *,
         time_unit_s: float,
-        scale: float = 1.0,
+        calibration: float = 1.0,
         w_floor_rad_s: float = 1.0e9,
+        prefactor: float = 1.0,
     ) -> np.ndarray:
-        """
-        Tier-B polaron-shaped EID (minimal):
-
-        gamma_eid(t) = scale * |Omega(t)|^2 * J(|Delta(t)|) * coth(hbar*|Delta|/(2*kB*T))
-
-        - Omega_solver is in solver units; convert back to rad/s via /time_unit_s.
-        - detuning_rad_s is physical rad/s.
-        - Returns gamma in 1/s as float array.
-
-        Notes:
-        - We clamp |Delta| from below by w_floor_rad_s to avoid coth divergence at 0.
-        - If T <= 0, we use coth -> 1 (zero-temperature limit).
-        """
-        det = np.asarray(detuning_rad_s, dtype=float).reshape(-1)
+        wstar = np.asarray(omega_star_rad_s, dtype=float).reshape(-1)
 
         if not bool(self.enabled):
-            return np.zeros_like(det)
+            return np.zeros_like(wstar)
 
         s = float(time_unit_s)
         if s <= 0.0:
             raise ValueError("time_unit_s must be > 0")
 
         omega_solver = np.asarray(omega_solver, dtype=complex).reshape(-1)
-        if omega_solver.size != det.size:
+        if omega_solver.size != wstar.size:
             raise ValueError(
-                "detuning_rad_s must have same length as omega_solver"
+                "omega_star_rad_s must have same length as omega_solver"
             )
 
-        # Omega in rad/s (physical)
+        # Omega in physical rad/s
         omega_rad_s = omega_solver / s
         om2 = (omega_rad_s.real * omega_rad_s.real) + (
             omega_rad_s.imag * omega_rad_s.imag
         )
 
-        # Use absolute detuning frequency with a floor to avoid coth divergence
-        w = np.abs(det)
-        w_eff = np.maximum(w, float(w_floor_rad_s))
+        # floor to avoid division by zero
+        w_eff = np.maximum(np.abs(wstar), float(w_floor_rad_s))
 
-        # J(w) in SI using float-only spectral density (alpha in s^2, w in rad/s)
+        # J(w) and J(w)/w^2
         jw = self._j_of_w(w_eff)
+        jw_over_w2 = jw / (w_eff * w_eff)
 
-        # Thermal factor using Pint unitful constants from smef.core.units
+        # coth factor
         T = float(self.temperature_K)
         if T <= 0.0:
             therm = np.ones_like(w_eff)
         else:
-            # Build dimensionless x = hbar*w/(2*kB*T)
-            # _hbar has units J*s, w is rad/s, kB is J/K, T is K -> dimensionless.
             w_q = Q(w_eff, "rad/s")
             T_q = Q(T, "K")
             x_q = (_hbar * w_q) / (2.0 * _kB * T_q)
-
-            # Convert to plain floats (dimensionless) for stable coth implementation
             x = np.asarray(x_q.to_base_units().magnitude, dtype=float)
-
-            # coth(x) (stable)
             therm = self._coth(x)
 
-        return float(scale) * om2 * jw * therm
+        cal = float(calibration)
+        if cal <= 0.0:
+            return np.zeros_like(w_eff)
+
+        return (float(prefactor) * cal) * om2 * jw_over_w2 * therm
+
+    def _omega_rabi_rad_s(
+        self,
+        omega_solver: np.ndarray,
+        *,
+        time_unit_s: float,
+        b_polaron: float = 1.0,
+    ) -> np.ndarray:
+        s = float(time_unit_s)
+        if s <= 0.0:
+            raise ValueError("time_unit_s must be > 0")
+        om = np.asarray(omega_solver, dtype=complex).reshape(-1) / s
+        amp = np.sqrt((om.real * om.real) + (om.imag * om.imag))
+        return amp * float(b_polaron)
+
+    def omega_star_rad_s(
+        self,
+        omega_solver: np.ndarray,
+        detuning_rad_s: np.ndarray,
+        *,
+        time_unit_s: float,
+        b_polaron: float = 1.0,
+        w_floor_rad_s: float = 1.0e8,
+    ) -> np.ndarray:
+        OmR = self._omega_rabi_rad_s(
+            omega_solver, time_unit_s=time_unit_s, b_polaron=b_polaron
+        )
+        D = np.asarray(detuning_rad_s, dtype=float).reshape(-1)
+        w = np.sqrt((D * D) + (OmR * OmR))
+        return np.maximum(w, float(w_floor_rad_s))
+
+    def _re_int_exp_iwt_G(
+        self,
+        w_rad_s: np.ndarray,
+        *,
+        tau_s: np.ndarray,
+        G_tau: np.ndarray,
+    ) -> np.ndarray:
+        # returns Re \int_0^{tau_max} d tau exp(i w tau) G(tau)
+        w = np.asarray(w_rad_s, dtype=float).reshape(-1)
+        tau = np.asarray(tau_s, dtype=float).reshape(-1)
+        G = np.asarray(G_tau, dtype=complex).reshape(-1)
+
+        dtau = float(tau[1] - tau[0])
+
+        # Broadcasting: (Nt, 1) * (1, Nw) -> (Nt, Nw)
+        phase = tau[:, None] * w[None, :]
+        epos = np.exp(1j * phase)
+        integrand = epos * G[:, None]
+        val = np.trapezoid(integrand, tau, axis=0)
+        return np.real(val).astype(float)
 
 
 class PhononModelProto(Protocol):
@@ -287,15 +679,35 @@ class PolaronLAPhononModel:
         self,
         *,
         params: PhononParams,
+        energy: EnergyStructure,
+        mixing: ExcitonMixingParams,
         transitions: TransitionRegistry = DEFAULT_TRANSITION_REGISTRY,
-        exciton_split_rad_s: Optional[QuantityLike] = None,
     ):
         self._P = params
         self._tr = transitions
-        self._omega_x = exciton_split_rad_s
-        self._cache: Dict[str, float] = {}
+        self._energy = energy
+        self._mixing = mixing
+        self._cache: dict[str, float] = {}
 
     # ---------------- state couplings ----------------
+
+    def _delta_prime_eV(self) -> float:
+        m = self._mixing
+        if m is None:
+            return 0.0
+        return float(m.delta_prime.to("eV").magnitude)
+
+    def _exciton_eigsplitting_rad_s(self) -> float:
+        # DeltaE = sqrt(FSS^2 + (2 delta_prime)^2)
+        fss_eV = float(
+            (self._energy.X1.to("eV") - self._energy.X2.to("eV")).magnitude
+        )
+        dp_eV = float(self._delta_prime_eV())
+        dE_eV = math.sqrt((fss_eV * fss_eV) + (2.0 * dp_eV) * (2.0 * dp_eV))
+        if dE_eV <= 0.0:
+            return 0.0
+        dE_J = Q(dE_eV, "eV").to("J")
+        return float((dE_J / _hbar).to("rad/s").magnitude)
 
     def _phi(self, s: QDState) -> float:
         c = self._P.couplings
@@ -355,7 +767,7 @@ class PolaronLAPhononModel:
         if alpha <= 0.0 or wc <= 0.0 or s2 <= 0.0:
             return 1.0
 
-        key = "B:{:.6e}:{:.6e}:{:.6e}:{:.6e}".format(alpha, wc, T, float(s2))
+        key = f"B:{alpha:.6e}:{wc:.6e}:{T:.6e}:{float(s2):.6e}"
         cached = self._cache.get(key)
         if cached is not None:
             return cached
@@ -406,9 +818,9 @@ class PolaronLAPhononModel:
 
     # ---------------- constant rates ----------------
 
-    def _phenomenological_rates(self) -> Dict[RateKey, QuantityLike]:
+    def _phenomenological_rates(self) -> dict[RateKey, QuantityLike]:
         ph = self._P.phenomenological
-        out: Dict[RateKey, QuantityLike] = {}
+        out: dict[RateKey, QuantityLike] = {}
 
         g1 = float(ph.gamma_phi_x1.to("1/s").magnitude)
         g2 = float(ph.gamma_phi_x2.to("1/s").magnitude)
@@ -430,18 +842,16 @@ class PolaronLAPhononModel:
 
         return out
 
-    def _polaron_exciton_relax_rates(self) -> Dict[RateKey, QuantityLike]:
+    def _polaron_exciton_relax_rates(self) -> dict[RateKey, QuantityLike]:
         P = self._P
         if not bool(P.polaron_la.enable_exciton_relaxation):
             return {}
 
-        if self._omega_x is None:
-            return {}
-        w = float(as_quantity(self._omega_x, "rad/s").magnitude)
+        w = float(self._exciton_eigsplitting_rad_s())
         if w <= 0.0:
             return {}
 
-        # requires X1 and X2 to be distinguishable
+        # requires X1 and X2 to be distinguishable via couplings
         d = self._phi(QDState.X1) - self._phi(QDState.X2)
         s2 = float(d * d)
         if s2 <= 0.0:
@@ -455,11 +865,158 @@ class PolaronLAPhononModel:
         g_down = float(2.0 * math.pi * s2 * Jw * (n + 1.0))
         g_up = float(2.0 * math.pi * s2 * Jw * n)
 
-        out: Dict[RateKey, QuantityLike] = {}
+        # Decide which directed key corresponds to downhill vs uphill
+        e_x1 = float(self._energy.X1.to("eV").magnitude)
+        e_x2 = float(self._energy.X2.to("eV").magnitude)
+
+        if e_x1 >= e_x2:
+            key_down = RateKey.PH_RELAX_X1_X2
+            key_up = RateKey.PH_RELAX_X2_X1
+        else:
+            key_down = RateKey.PH_RELAX_X2_X1
+            key_up = RateKey.PH_RELAX_X1_X2
+
+        out: dict[RateKey, QuantityLike] = {}
         if g_down > 0.0:
-            out[RateKey.PH_RELAX_X1_X2] = as_quantity(g_down, "1/s")
+            out[key_down] = as_quantity(g_down, "1/s")
         if g_up > 0.0:
-            out[RateKey.PH_RELAX_X2_X1] = as_quantity(g_up, "1/s")
+            out[key_up] = as_quantity(g_up, "1/s")
+        return out
+
+    def _state_energy_eV(self, s: QDState) -> float:
+        if s is QDState.G:
+            return float(self._energy.G.to("eV").magnitude)
+        if s is QDState.X1:
+            return float(self._energy.X1.to("eV").magnitude)
+        if s is QDState.X2:
+            return float(self._energy.X2.to("eV").magnitude)
+        if s is QDState.XX:
+            return float(self._energy.XX.to("eV").magnitude)
+        return 0.0
+
+    def _omega_between_states_rad_s(self, high: QDState, low: QDState) -> float:
+        e_hi = self._state_energy_eV(high)
+        e_lo = self._state_energy_eV(low)
+        de_eV = e_hi - e_lo
+        if de_eV <= 0.0:
+            return 0.0
+        de_J = Q(de_eV, "eV").to("J")
+        return float((de_J / _hbar).to("rad/s").magnitude)
+
+    def _pair_relax_rates(
+        self,
+        *,
+        high: QDState,
+        low: QDState,
+        key_down: RateKey,
+        key_up: RateKey,
+        scale: float = 1.0,
+    ) -> dict[RateKey, QuantityLike]:
+        w = float(self._omega_between_states_rad_s(high, low))
+        if w <= 0.0:
+            return {}
+
+        d = self._phi(high) - self._phi(low)
+        s2 = float(d * d)
+        if s2 <= 0.0:
+            return {}
+
+        Jw = self._j_of_w(w)
+        if Jw <= 0.0:
+            return {}
+
+        n = self._bose_n(w)
+        g_down = float(2.0 * math.pi * s2 * Jw * (n + 1.0)) * float(scale)
+        g_up = float(2.0 * math.pi * s2 * Jw * n) * float(scale)
+
+        out: dict[RateKey, QuantityLike] = {}
+        if g_down > 0.0:
+            out[key_down] = as_quantity(g_down, "1/s")
+        if g_up > 0.0:
+            out[key_up] = as_quantity(g_up, "1/s")
+        return out
+
+    def _polaron_static_relax_rates_all(self) -> dict[RateKey, QuantityLike]:
+        P = self._P
+        if not bool(P.polaron_la.enable_exciton_relaxation):
+            return {}
+
+        # Optional: global scaling knob (add to params if you want)
+        scale = 1.0
+        ph = getattr(P, "phenomenological", None)
+        if ph is not None:
+            scale = float(getattr(ph, "gamma_relax_global_scale", 1.0))
+
+        out: dict[RateKey, QuantityLike] = {}
+
+        # X1 <-> X2: choose high/low by energy values
+        e_x1 = self._state_energy_eV(QDState.X1)
+        e_x2 = self._state_energy_eV(QDState.X2)
+        if e_x1 >= e_x2:
+            out.update(
+                self._pair_relax_rates(
+                    high=QDState.X1,
+                    low=QDState.X2,
+                    key_down=RateKey.PH_RELAX_X1_X2,
+                    key_up=RateKey.PH_RELAX_X2_X1,
+                    scale=scale,
+                )
+            )
+        else:
+            out.update(
+                self._pair_relax_rates(
+                    high=QDState.X2,
+                    low=QDState.X1,
+                    key_down=RateKey.PH_RELAX_X2_X1,
+                    key_up=RateKey.PH_RELAX_X1_X2,
+                    scale=scale,
+                )
+            )
+
+        # X1 <-> G
+        out.update(
+            self._pair_relax_rates(
+                high=QDState.X1,
+                low=QDState.G,
+                key_down=RateKey.PH_RELAX_X1_G,
+                key_up=RateKey.PH_RELAX_G_X1,
+                scale=scale,
+            )
+        )
+
+        # X2 <-> G
+        out.update(
+            self._pair_relax_rates(
+                high=QDState.X2,
+                low=QDState.G,
+                key_down=RateKey.PH_RELAX_X2_G,
+                key_up=RateKey.PH_RELAX_G_X2,
+                scale=scale,
+            )
+        )
+
+        # XX <-> X1
+        out.update(
+            self._pair_relax_rates(
+                high=QDState.XX,
+                low=QDState.X1,
+                key_down=RateKey.PH_RELAX_XX_X1,
+                key_up=RateKey.PH_RELAX_X1_XX,
+                scale=scale,
+            )
+        )
+
+        # XX <-> X2
+        out.update(
+            self._pair_relax_rates(
+                high=QDState.XX,
+                low=QDState.X2,
+                key_down=RateKey.PH_RELAX_XX_X2,
+                key_up=RateKey.PH_RELAX_X2_XX,
+                scale=scale,
+            )
+        )
+
         return out
 
     # ---------------- public compute ----------------
@@ -469,10 +1026,10 @@ class PolaronLAPhononModel:
         if P.kind is PhononModelKind.NONE:
             return PhononOutputs()
 
-        rates: Dict[RateKey, QuantityLike] = {}
+        rates: dict[RateKey, QuantityLike] = {}
         rates.update(self._phenomenological_rates())
 
-        bmap: Dict[Transition, float] = {}
+        bmap: dict[Transition, float] = {}
         if (
             P.kind is PhononModelKind.POLARON_LA
             and P.polaron_la.enable_polaron_renorm
@@ -485,15 +1042,7 @@ class PolaronLAPhononModel:
         if P.kind is PhononModelKind.POLARON_LA:
             rates.update(self._polaron_exciton_relax_rates())
 
-        pol = P.polaron_la
-        eid = PolaronEIDConfig(
-            enabled=bool(
-                P.kind is PhononModelKind.POLARON_LA and pol.enable_eid
-            ),
-            alpha_s2=float(pol.alpha.to("s**2").magnitude),
-            omega_c_rad_s=float(pol.omega_c.to("rad/s").magnitude),
-            temperature_K=float(P.temperature.to("K").magnitude),
-        )
+        print(bmap)
 
         pol = P.polaron_la
         eid = PolaronEIDConfig(

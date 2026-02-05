@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 from smef.core.units import QuantityLike
 
@@ -46,7 +46,7 @@ class CavityParams:
         Veff_um3: Any,
         lambda_nm: Any,
         n: Any = 3.5,
-    ) -> "CavityParams":
+    ) -> CavityParams:
         obj = cls(
             Q=as_dimless(Q),
             Veff=as_um3(Veff_um3),
@@ -78,7 +78,7 @@ class CavityParams:
         if lam <= 0.0:
             raise ValueError(f"lambda must be > 0, got {self.lambda_cav}")
 
-    def as_floats(self) -> Dict[str, float]:
+    def as_floats(self) -> dict[str, float]:
         return {
             "Q": float(self.Q),
             "Veff_m3": float(self.Veff_m3.magnitude),

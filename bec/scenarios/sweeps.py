@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Tuple
+from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 
-from .types import (
-    SchemeKind,
-    SweepAxis,
-    SweepSpec,
-    SweepGridSpec,
-    Sweep1DResult,
-    Sweep2DResult,
-)
 from .factories import get_scheme_factory
 from .run import run_scenario_once
+from .types import (
+    SchemeKind,
+    Sweep1DResult,
+    Sweep2DResult,
+    SweepAxis,
+    SweepGridSpec,
+    SweepSpec,
+)
 
 
 def run_sweep_1d(
@@ -99,8 +100,8 @@ def run_sweep_2d(
 
 
 def _apply_axis_value(
-    kwargs: Dict[str, Any], axis: SweepAxis, v: float
-) -> Dict[str, Any]:
+    kwargs: dict[str, Any], axis: SweepAxis, v: float
+) -> dict[str, Any]:
     out = dict(kwargs)
     if axis is SweepAxis.AMP_SCALE:
         out["amp_scale"] = float(v)

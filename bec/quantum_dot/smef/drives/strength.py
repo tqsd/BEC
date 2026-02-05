@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any
 
 import numpy as np
-
 from smef.core.drives.protocols import (
     DriveDecodeContextProto,
     DriveStrengthModelProto,
@@ -22,7 +22,7 @@ def _payload_from_ctx(drive_id: Any, ctx: QDDriveDecodeContext) -> Any:
     raise KeyError("Missing drive payload for drive_id=%s" % (drive_id,))
 
 
-def _effective_pol(payload: Any) -> Optional[np.ndarray]:
+def _effective_pol(payload: Any) -> np.ndarray | None:
     fn = getattr(payload, "effective_pol", None)
     if not callable(fn):
         return None
@@ -61,7 +61,7 @@ class QDDriveStrengthModel(DriveStrengthModelProto):
         tlist: np.ndarray,
         *,
         time_unit_s: float,
-        decode_ctx: Optional[DriveDecodeContextProto] = None,
+        decode_ctx: DriveDecodeContextProto | None = None,
     ) -> DriveCoefficients:
         if not isinstance(decode_ctx, QDDriveDecodeContext):
             raise TypeError("QDDriveStrengthModel expects QDDriveDecodeContext")

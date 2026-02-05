@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import numpy as np
-
 from smef.core.units import magnitude
-from bec.quantum_dot.enums import Transition
 
+from bec.quantum_dot.enums import Transition
 
 HVVec = np.ndarray  # shape (2,), complex
 
@@ -86,7 +85,7 @@ class ExcitonBasisReportMixin:
         s = float(np.sin(th))
         return np.array([[c, s], [-s, c]], dtype=float)
 
-    def exciton_eigen_energies_eV(self) -> Tuple[float, float]:
+    def exciton_eigen_energies_eV(self) -> tuple[float, float]:
         """
         Eigen-energies relative to the exciton center in eV:
           (+lambda, -lambda)
@@ -97,7 +96,7 @@ class ExcitonBasisReportMixin:
         lam = float(np.sqrt((0.5 * Delta) ** 2 + dp**2))
         return (lam, -lam)
 
-    def _effective_exciton_dipoles_hv(self) -> Dict[str, HVVec]:
+    def _effective_exciton_dipoles_hv(self) -> dict[str, HVVec]:
         """
         Build effective HV dipole direction vectors for exciton eigenstates.
 
@@ -120,7 +119,7 @@ class ExcitonBasisReportMixin:
 
         return {"Xa": d_a, "Xb": d_b}
 
-    def exciton_effective_polarization_report(self) -> Dict[str, Any]:
+    def exciton_effective_polarization_report(self) -> dict[str, Any]:
         """
         Return a pure-data dict suitable for rich/plain reporting.
 
@@ -135,7 +134,7 @@ class ExcitonBasisReportMixin:
         th = float(self.exciton_theta_rad)
 
         eff = self._effective_exciton_dipoles_hv()
-        out: Dict[str, Any] = {
+        out: dict[str, Any] = {
             "Delta_eV": Delta,
             "delta_prime_eV": dp,
             "theta_rad": th,

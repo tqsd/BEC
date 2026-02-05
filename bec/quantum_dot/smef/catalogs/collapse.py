@@ -1,23 +1,26 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any
 
 import numpy as np
-
-from smef.core.ir.ops import EmbeddedKron, LocalSymbolOp, OpExpr
+from smef.core.ir.ops import OpExpr
 from smef.core.ir.terms import Term, TermKind
 from smef.core.model.protocols import TermCatalogProto
 
-from bec.quantum_dot.enums import RateKey, Transition
+from bec.quantum_dot.enums import Transition
+from bec.quantum_dot.transitions import RateKey
 from bec.quantum_dot.smef.catalogs.base import FrozenCatalog
-from bec.quantum_dot.smef.modes import QDModes, QDModeKey
+from bec.quantum_dot.smef.modes import QDModeKey, QDModes
+
 from .base import (
+    _exciton_theta_rad_from_qd,
     _get_rate_value,
+    _maybe_get_rate_solver,
     _rotated_adag,
     _sigma_on_qd,
-    _maybe_get_rate_solver,
-    _exciton_theta_rad_from_qd,
+    _qd_op,
 )
 
 
@@ -112,12 +115,12 @@ class QDCollapseCatalog(FrozenCatalog):
         *,
         modes: QDModes,
         units,
-        theta: Optional[float] = None,
+        theta: float | None = None,
         phi: float = 0.0,
         # Which branch uses which rotated polarization.
         # Default mapping: XX_X1 uses "-", XX_X2 uses "+"; X1_G uses "-", X2_G uses "+".
-        xx_branch_signs: Tuple[str, str] = ("-", "+"),  # (XX_X1, XX_X2)
-        gx_branch_signs: Tuple[str, str] = ("-", "+"),  # (X1_G,  X2_G)
+        xx_branch_signs: tuple[str, str] = ("-", "+"),  # (XX_X1, XX_X2)
+        gx_branch_signs: tuple[str, str] = ("-", "+"),  # (X1_G,  X2_G)
     ) -> TermCatalogProto:
         if units is None:
             raise ValueError("units must be provided")
@@ -257,34 +260,35 @@ class QDCollapseCatalog(FrozenCatalog):
                 )
             )
 
-        # ---- phonon-induced exciton relaxation (optional) ----
-        # L = sqrt(gamma) * |dst><src| == sqrt(gamma) * t_src_dst
+        RELAX_KEY_TO_TRANSITION = {
+            RateKey.PH_RELAX_X1_X2: Transition.X1_X2,
+            RateKey.PH_RELAX_X2_X1: Transition.X2_X1,
+            RateKey.PH_RELAX_XX_X1: Transition.XX_X1,
+            RateKey.PH_RELAX_XX_X2: Transition.XX_X2,
+            RateKey.PH_RELAX_X1_G: Transition.X1_G,
+            RateKey.PH_RELAX_X2_G: Transition.X2_G,
+            RateKey.PH_RELAX_X1_XX: Transition.X1_XX,
+            RateKey.PH_RELAX_X2_XX: Transition.X2_XX,
+            RateKey.PH_RELAX_G_X1: Transition.G_X1,
+            RateKey.PH_RELAX_G_X2: Transition.G_X2,
+        }
 
-        g = _maybe_get_rate_solver(rates, RateKey.PH_RELAX_X1_X2, units=units)
-        if g is not None:
-            # Transition.X1_X2 corresponds to |X2><X1| in your convention.
-            op = _sigma_on_qd(qd_i, Transition.X1_X2)
+        for rk, tr in RELAX_KEY_TO_TRANSITION.items():
+            g = _maybe_get_rate_solver(rates, rk, units=units)
+            if g is None:
+                continue
+            op = _sigma_on_qd(qd_i, tr)
             terms.append(
                 Term(
                     kind=TermKind.C,
-                    op=OpExpr.scale(complex(np.sqrt(g)), op),
+                    op=OpExpr.scale(complex(np.sqrt(max(g, 0.0))), op),
                     coeff=None,
-                    label="L_ph_relax_X1_X2",
-                    meta={"kind": "phonon_relax", "tr": "X1_X2"},
-                )
-            )
-
-        g = _maybe_get_rate_solver(rates, RateKey.PH_RELAX_X2_X1, units=units)
-        if g is not None:
-            # Transition.X2_X1 corresponds to |X1><X2| in your convention.
-            op = _sigma_on_qd(qd_i, Transition.X2_X1)
-            terms.append(
-                Term(
-                    kind=TermKind.C,
-                    op=OpExpr.scale(complex(np.sqrt(g)), op),
-                    coeff=None,
-                    label="L_ph_relax_X2_X1",
-                    meta={"kind": "phonon_relax", "tr": "X2_X1"},
+                    label=f"L_{rk.value}",
+                    meta={
+                        "kind": "phonon_relax",
+                        "rate_key": rk.value,
+                        "tr": tr.value,
+                    },
                 )
             )
 

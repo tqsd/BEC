@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
-from bec.quantum_dot.enums import QDState, TransitionPair, TransitionKind
+from bec.quantum_dot.enums import QDState, TransitionKind, TransitionPair
 
 
 class TransitionsMixin:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Optional
 
 from bec.quantum_dot.enums import Transition
 from bec.quantum_dot.models.phonon_model import PhononModel, PhononOutputs

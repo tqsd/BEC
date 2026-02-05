@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from smef.core.ir.ops import EmbeddedKron, LocalSymbolOp, OpExpr
 from smef.core.ir.terms import Term, TermKind
 
-from bec.quantum_dot.ops.symbols import QDSymbol, ModeSymbol, sym
+from bec.quantum_dot.ops.symbols import ModeSymbol, QDSymbol, sym
 from bec.quantum_dot.smef.modes import QDModeKey, QDModes
 
 

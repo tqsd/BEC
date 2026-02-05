@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
-
-from smef.core.units import QuantityLike, Q, as_quantity
+from smef.core.units import Q, QuantityLike, as_quantity
 
 from .types import HVVec
 

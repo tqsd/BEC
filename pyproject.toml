@@ -30,6 +30,7 @@ dev = [
   "black",
   "flake8",
   "isort",
+  "ruff"
 ]
 
 [tool.black]
@@ -41,3 +42,12 @@ max-line-length = 80
 [tool.isort]
 line_length = 80
 profile = "black"
+
+
+[tool.ruff]
+line-length = 80
+select = ["E", "F", "I", "UP"]
+fix = true
+
+[tool.ruff.format]
+quote-style = "double"

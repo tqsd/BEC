@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict
 
 from smef.core.units import QuantityLike
 
@@ -62,7 +61,7 @@ class PhenomenologicalPhononParams:
             if val < 0.0:
                 raise ValueError(f"{name} must be non-negative")
 
-    def as_floats(self) -> Dict[str, float]:
+    def as_floats(self) -> dict[str, float]:
         return {
             "gamma_phi_Xp_1_s": self.gamma_phi_Xp_1_s,
             "gamma_phi_Xm_1_s": self.gamma_phi_Xm_1_s,
@@ -102,7 +101,7 @@ class PolaronPhononParams:
                 "omega_c must be > 0 when polaron renorm is enabled"
             )
 
-    def as_floats(self) -> Dict[str, float]:
+    def as_floats(self) -> dict[str, float]:
         return {
             "enable_polaron_renorm": float(self.enable_polaron_renorm),
             "alpha_s2": self.alpha_s2,
@@ -169,8 +168,8 @@ class PhononParams:
                     "omega_c must be > 0 when polaron renorm is enabled"
                 )
 
-    def as_floats(self) -> Dict[str, float]:
-        out: Dict[str, float] = {
+    def as_floats(self) -> dict[str, float]:
+        out: dict[str, float] = {
             "temperature_K": self.temperature_K,
             "phi_G": float(self.phi_G),
             "phi_X": float(self.phi_X),

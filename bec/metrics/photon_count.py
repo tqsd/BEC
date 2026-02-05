@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
 
 import numpy as np
 

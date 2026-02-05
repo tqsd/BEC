@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any
 
 import numpy as np
-
 from smef.core.drives.protocols import (
     DriveDecodeContextProto,
     DriveTermEmitterProto,
@@ -70,7 +70,7 @@ class QDDriveTermEmitter(DriveTermEmitterProto):
         resolved: Sequence[ResolvedDrive],
         coeffs: DriveCoefficients,
         *,
-        decode_ctx: Optional[DriveDecodeContextProto] = None,
+        decode_ctx: DriveDecodeContextProto | None = None,
     ) -> DriveTermBundle:
         if not isinstance(decode_ctx, QDDriveDecodeContext):
             raise TypeError("QDDriveTermEmitter expects QDDriveDecodeContext")

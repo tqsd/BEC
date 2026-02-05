@@ -1,27 +1,33 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Dict, Mapping, Optional
 
 import numpy as np
-
 from smef.core.units import (
     Q,
     QuantityLike,
     as_quantity,
     magnitude,
+)
+from smef.core.units import (
     c as _c,
-    hbar as _hbar,
+)
+from smef.core.units import (
     epsilon_0 as _eps_0,
 )
+from smef.core.units import (
+    hbar as _hbar,
+)
 
-from bec.quantum_dot.enums import QDState, RateKey, Transition
+from bec.quantum_dot.enums import QDState, Transition
 from bec.quantum_dot.spec.cavity_params import CavityParams
 from bec.quantum_dot.spec.dipole_params import DipoleParams
 from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.transitions import (
     DEFAULT_TRANSITION_REGISTRY,
     RAD_RATE_TO_TRANSITION,
+    RateKey,
     TransitionRegistry,
 )
 
@@ -50,7 +56,7 @@ class DecayOutputs:
 
     """
 
-    rates: Dict[RateKey, QuantityLike] = field(default_factory=dict)
+    rates: dict[RateKey, QuantityLike] = field(default_factory=dict)
 
     def rates_1_s(self) -> Mapping[RateKey, float]:
         return {k: float(v.to("1/s").magnitude) for k, v in self.rates.items()}
@@ -116,7 +122,7 @@ class DecayModel:
 
     energy_structure: EnergyStructure
     dipole_params: DipoleParams
-    cavity_params: Optional[CavityParams] = None
+    cavity_params: CavityParams | None = None
     transitions: TransitionRegistry = DEFAULT_TRANSITION_REGISTRY
 
     def level_energy(self, s: QDState) -> QuantityLike:
@@ -245,11 +251,11 @@ class DecayModel:
         Fp = self.purcell_factor(tr)
         return (g0 * (1.0 + Fp)).to("1/s")
 
-    def compute_rates(self) -> Dict[RateKey, QuantityLike]:
+    def compute_rates(self) -> dict[RateKey, QuantityLike]:
         """
         Compute all registered radiative rates keyed by RateKey.
         """
-        out: Dict[RateKey, QuantityLike] = {}
+        out: dict[RateKey, QuantityLike] = {}
         for key, tr in RAD_RATE_TO_TRANSITION.items():
             out[key] = self.gamma(tr)
         return out

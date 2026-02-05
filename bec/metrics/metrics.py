@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
 import numpy as np
-import math
 
-from bec.metrics.bell import fidelity_to_bell
+from bec.metrics.bell import fidelity_to_bell, bell_component_from_rho_pol
 from bec.metrics.decompose import PhotonDecomposition, decompose_photons
 from bec.metrics.entanglement import log_negativity
 from bec.metrics.linops import partial_trace
 from bec.metrics.mode_registry import MetricGroups, default_groups, indices_of
-from bec.metrics.photon_count import expected_n_group, expected_n_per_mode
+from bec.metrics.overlap import overlap_metrics_as_dict
+from bec.metrics.photon_count import expected_n_per_mode
 from bec.metrics.two_photon import TwoPhotonResult, two_photon_postselect
 
 
@@ -51,6 +53,64 @@ def _is_finite(x: float) -> bool:
     return math.isfinite(float(x))
 
 
+def _log_negativity_photons_early_late(
+    rho_full: np.ndarray,
+    dims: Sequence[int],
+    early_indices: Sequence[int],
+    late_indices: Sequence[int],
+    *,
+    sys: int = 0,
+) -> float:
+    """
+    Log-negativity of the full photonic state across the bipartition:
+      early band (XX_H, XX_V) | late band (GX_H, GX_V)
+
+    This is computed on rho_ph = Tr_QD(rho_full) restricted to the four optical modes.
+    """
+    dims = [int(d) for d in dims]
+    e = [int(i) for i in early_indices]
+    l = [int(i) for i in late_indices]
+    keep = e + l  # order: early then late
+
+    rho_opt = partial_trace(rho_full, dims, keep=keep)
+
+    de = int(dims[e[0]])
+    if int(dims[e[1]]) != de:
+        raise ValueError("early H/V dims mismatch")
+
+    dl = int(dims[l[0]])
+    if int(dims[l[1]]) != dl:
+        raise ValueError("late H/V dims mismatch")
+
+    d_early = de * de
+    d_late = dl * dl
+
+    # rho_opt is on (eH,eV,lH,lV) i.e. dims (de,de,dl,dl)
+    # reshape to (early_pair, late_pair) so log_negativity can treat it as bipartite
+    rho_bip = np.asarray(rho_opt, dtype=complex).reshape(
+        (d_early * d_late, d_early * d_late)
+    )
+
+    return float(log_negativity(rho_bip, dims=(d_early, d_late), sys=int(sys)))
+
+
+def _purity(rho: np.ndarray) -> float:
+    rho = np.asarray(rho, dtype=complex)
+    try:
+        val = np.trace(rho @ rho)
+        val = np.real_if_close(val)
+        return float(np.real(val))
+    except Exception:
+        return float("nan")
+
+
+def _purity_reduced(
+    rho_full: np.ndarray, dims: Sequence[int], keep: Sequence[int]
+) -> float:
+    rho_red = partial_trace(rho_full, dims, keep=[int(i) for i in keep])
+    return _purity(rho_red)
+
+
 @dataclass(frozen=True)
 class StateSanity:
     trace: float
@@ -81,7 +141,13 @@ class QDMetrics:
 
     two_photon: TwoPhotonResult
     bell_fidelity_phi_plus: float
+    log_negativity_uncond: float
     log_negativity_pol: float
+
+    purity_full: float
+    purity_photons_all: float
+    purity_qd: float
+    purity_pol_post: float
 
     meta: Mapping[str, Any] = field(default_factory=dict)
 
@@ -141,6 +207,17 @@ class QDMetrics:
         lines.append(f"<n_XX_H>     : {f(self.counts.n_xx_h)}")
         lines.append(f"<n_XX_V>     : {f(self.counts.n_xx_v)}")
 
+        lines.append("")
+        lines.append("PURITY")
+        lines.append("-" * 78)
+        lines.append(f"Purity (full)        : {f(self.purity_full)}")
+        lines.append(f"Purity (QD reduced)  : {f(self.purity_qd)}")
+        lines.append(f"Purity (photons GX+XX): {f(self.purity_photons_all)}")
+        if self.two_photon.p11 > 0.0:
+            lines.append(f"Purity (pol, post)   : {f(self.purity_pol_post)}")
+        else:
+            lines.append("Purity (pol, post)   : n/a (p11 = 0)")
+
         # --- Two-photon metrics ---
         lines.append("")
         lines.append("TWO-PHOTON POSTSELECTION (early=XX, late=GX)")
@@ -174,7 +251,7 @@ class QDMetrics:
 
     def compare(
         self,
-        other: "QDMetrics",
+        other: QDMetrics,
         *,
         name_self: str = "A",
         name_other: str = "B",
@@ -227,14 +304,14 @@ class QDMetrics:
 
         # --- Photon decompositions helper
         def block_decomp(
-            title: str, da: "PhotonDecomposition", db: "PhotonDecomposition"
+            title: str, da: PhotonDecomposition, db: PhotonDecomposition
         ) -> None:
             lines.append("")
             lines.append(title)
             lines.append("-" * 78)
             lines.append(
                 f"p0       : {_fmt_triplet(
-                _safe_float(da.p0), _safe_float(db.p0), p)}"
+                    _safe_float(da.p0), _safe_float(db.p0), p)}"
             )
             lines.append(
                 f"p1_total : {_fmt_triplet(_safe_float(
@@ -275,21 +352,24 @@ class QDMetrics:
         )
         lines.append(
             f"<n_GX_H>     : {_fmt_triplet(
-            self.counts.n_gx_h, other.counts.n_gx_h, p)}"
+                self.counts.n_gx_h, other.counts.n_gx_h, p)}"
         )
         lines.append(
             f"<n_GX_V>     : {_fmt_triplet(
-            self.counts.n_gx_v, other.counts.n_gx_v, p)}"
+                self.counts.n_gx_v, other.counts.n_gx_v, p)}"
         )
         lines.append(
             f"<n_XX_H>     : {_fmt_triplet(
-            self.counts.n_xx_h, other.counts.n_xx_h, p)}"
+                self.counts.n_xx_h, other.counts.n_xx_h, p)}"
         )
         lines.append(
             f"<n_XX_V>     : {_fmt_triplet(
-            self.counts.n_xx_v, other.counts.n_xx_v, p)}"
+                self.counts.n_xx_v, other.counts.n_xx_v, p)}"
         )
 
+        lines.append(f"Purity (full)        : {(self.purity_full)}")
+        lines.append(f"Purity (QD reduced)  : {(self.purity_qd)}")
+        lines.append(f"Purity (photons GX+XX): {(self.purity_photons_all)}")
         # --- Two-photon and entanglement
         lines.append("")
         lines.append("TWO-PHOTON POSTSELECTION (early=XX, late=GX)")
@@ -299,7 +379,7 @@ class QDMetrics:
         b_p11 = _safe_float(other.two_photon.p11)
         lines.append(
             f"P(n_early=1, n_late=1) : {
-                     _fmt_triplet(a_p11, b_p11, p)}"
+                _fmt_triplet(a_p11, b_p11, p)}"
         )
 
         # Only report fidelity/negativity meaningfully if p11 is nonzero; still show numbers
@@ -308,13 +388,14 @@ class QDMetrics:
         a_ln = _safe_float(self.log_negativity_pol)
         b_ln = _safe_float(other.log_negativity_pol)
 
+        lines.append(f"Purity (pol, post)   : {(self.purity_pol_post)}")
         if a_p11 > 0.0 or b_p11 > 0.0:
             lines.append(
                 f"Bell fidelity (phi+)  : {_fmt_triplet(a_bf, b_bf, p)}"
             )
             lines.append(
                 f"Log negativity        : {
-                         _fmt_triplet(a_ln, b_ln, p)}"
+                    _fmt_triplet(a_ln, b_ln, p)}"
             )
         else:
             lines.append("Bell fidelity (phi+)  : n/a (both p11 = 0)")
@@ -408,11 +489,11 @@ class QDDiagnostics:
     - Assumes modes are QDModes ordering: qd, GX_H, GX_V, XX_H, XX_V
     """
 
-    groups: Optional[MetricGroups] = None
+    groups: MetricGroups | None = None
     bell_target: str = "phi_plus"
 
     def compute(
-        self, qd: Any, res: Any, *, units: Optional[Any] = None
+        self, qd: Any, res: Any, *, units: Any | None = None
     ) -> QDMetrics:
         # Get modes/dims from compile_bundle (units needed by your API)
         if units is None:
@@ -463,6 +544,20 @@ class QDDiagnostics:
             n_xx_v=float(n_xx_v),
         )
 
+        purity_full = _purity(rho_final)
+        purity_qd = _purity_reduced(
+            rho_final, dims, keep=[modes.index_of("qd")]
+        )
+        purity_photons_all = _purity_reduced(rho_final, dims, keep=all_ph_idx)
+
+        ln_phot = _log_negativity_photons_early_late(
+            rho_final,
+            dims,
+            early_indices=xx_idx,
+            late_indices=gx_idx,
+            sys=0,
+        )
+
         # Two-photon postselection and polarization metrics
         # Convention: early=XX, late=GX
         tp = two_photon_postselect(
@@ -472,12 +567,49 @@ class QDDiagnostics:
             late_indices=gx_idx,
         )
 
+        bell_component = None
+
         if tp.p11 > 0.0:
             bell_f = fidelity_to_bell(tp.rho_pol, which=self.bell_target)
             ln = log_negativity(tp.rho_pol, dims=(2, 2), sys=0)
+            purity_pol_post = _purity(tp.rho_pol)
+            bc = bell_component_from_rho_pol(tp.rho_pol)
+            bell_component = {
+                "weights": {
+                    # names chosen to match your old interface
+                    "p_pp": bc.p_hh,
+                    "p_pm": bc.p_hv,
+                    "p_mp": bc.p_vh,
+                    "p_mm": bc.p_vv,
+                    "parallel": bc.parallel,
+                    "cross": bc.cross,
+                },
+                "coherence_cross": {
+                    "abs": bc.coh_phi_abs,
+                    "phase_rad": bc.phi_phase_rad,
+                    "phase_deg": bc.phi_phase_deg,
+                },
+            }
         else:
             bell_f = 0.0
             ln = 0.0
+            purity_pol_post = float("nan")
+            purity_pol_post = float("nan")
+            bell_component = {
+                "weights": {
+                    "p_pp": 0.0,
+                    "p_pm": 0.0,
+                    "p_mp": 0.0,
+                    "p_mm": 0.0,
+                    "parallel": 0.0,
+                    "cross": 0.0,
+                },
+                "coherence_cross": {
+                    "abs": 0.0,
+                    "phase_rad": float("nan"),
+                    "phase_deg": float("nan"),
+                },
+            }
 
         meta = dict(getattr(res, "meta", {}) or {})
         meta.update(
@@ -487,8 +619,10 @@ class QDDiagnostics:
                 "bell_target": self.bell_target,
                 "early_band": "XX",
                 "late_band": "GX",
+                "bell_component": bell_component,
             }
         )
+        meta.update(overlap_metrics_as_dict(qd))
 
         return QDMetrics(
             sanity=sanity,
@@ -497,8 +631,13 @@ class QDDiagnostics:
             photons_gx=photons_gx,
             photons_xx=photons_xx,
             counts=counts,
+            log_negativity_uncond=float(ln_phot),
             two_photon=tp,
             bell_fidelity_phi_plus=float(bell_f),
             log_negativity_pol=float(ln),
+            purity_full=float(purity_full),
+            purity_qd=float(purity_qd),
+            purity_photons_all=float(purity_photons_all),
+            purity_pol_post=float(purity_pol_post),
             meta=meta,
         )

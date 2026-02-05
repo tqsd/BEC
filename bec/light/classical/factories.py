@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from smef.core.units import (
     Q,
-    QuantityLike,
     as_quantity,
     energy_to_rad_s,
-    magnitude,
     wavelength_to_energy,
 )
 
@@ -22,19 +20,19 @@ from .field_drive import ClassicalFieldDriveU
 def gaussian_field_drive(
     *,
     t0: Any,
-    sigma: Optional[Any] = None,
-    fwhm: Optional[Any] = None,
+    sigma: Any | None = None,
+    fwhm: Any | None = None,
     E0: Any,
     # carrier specification (choose one style)
-    omega0: Optional[Any] = None,  # rad/s
-    wavelength: Optional[Any] = None,  # nm, um, m, ...
-    energy: Optional[Any] = None,  # eV
+    omega0: Any | None = None,  # rad/s
+    wavelength: Any | None = None,  # nm, um, m, ...
+    energy: Any | None = None,  # eV
     delta_omega: Any = Q(0.0, "rad/s"),
     phi0: float = 0.0,
-    pol_state: Optional[JonesState] = None,
-    pol_transform: Optional[JonesMatrix] = None,
-    preferred_kind: Optional[str] = None,  # "1ph" or "2ph"
-    label: Optional[str] = None,
+    pol_state: JonesState | None = None,
+    pol_transform: JonesMatrix | None = None,
+    preferred_kind: str | None = None,  # "1ph" or "2ph"
+    label: str | None = None,
 ) -> ClassicalFieldDriveU:
     """
     Build a ClassicalFieldDriveU with a peak-normalized Gaussian envelope and unitful field amplitude.

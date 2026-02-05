@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
 
 import numpy as np
-
 from smef.core.drives.types import DriveSpec
-from bec.quantum_dot.enums import Transition, TransitionPair
-from bec.quantum_dot.transitions import DEFAULT_TRANSITION_REGISTRY
 
+from bec.quantum_dot.enums import Transition, TransitionPair
 from bec.quantum_dot.smef.drives.context import (
     DecodePolicy,
     QDDriveDecodeContext,
 )
 from bec.quantum_dot.smef.drives.decoder import QDDriveDecoder
+from bec.quantum_dot.transitions import DEFAULT_TRANSITION_REGISTRY
 
 
 @dataclass
@@ -28,13 +27,13 @@ class _FakeDrivePayload:
     """
 
     omega0_rad_s: float
-    pol: Optional[np.ndarray] = None
-    preferred_kind: Optional[str] = None
+    pol: np.ndarray | None = None
+    preferred_kind: str | None = None
 
     def omega_L_rad_s(self, _t_phys_s: float) -> float:
         return float(self.omega0_rad_s)
 
-    def effective_pol(self) -> Optional[np.ndarray]:
+    def effective_pol(self) -> np.ndarray | None:
         if self.pol is None:
             return None
         return np.asarray(self.pol, dtype=complex).reshape(2)

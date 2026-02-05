@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
-
 from smef.core.drives.protocols import (
-    DriveDecoderProto,
     DriveDecodeContextProto,
+    DriveDecoderProto,
 )
 from smef.core.drives.types import DriveSpec, ResolvedDrive
 
 from bec.quantum_dot.enums import TransitionPair
 from bec.quantum_dot.smef.drives.context import (
     QDDriveDecodeContext,
-    DecodePolicy,
 )
 
 
@@ -47,7 +45,7 @@ def _laser_omega_samples(
         idxs = np.linspace(0, tlist_solver.size - 1, n, dtype=int).tolist()
 
     s = float(time_unit_s)
-    out: List[float] = []
+    out: list[float] = []
     for i in idxs:
         t_phys = s * float(tlist_solver[i])
         fn = getattr(payload, "omega_L_rad_s", None)
@@ -60,7 +58,7 @@ def _laser_omega_samples(
     return np.asarray(out, dtype=float)
 
 
-def _effective_pol(payload: Any) -> Optional[np.ndarray]:
+def _effective_pol(payload: Any) -> np.ndarray | None:
     fn = getattr(payload, "effective_pol", None)
     if callable(fn):
         v = fn()
@@ -71,7 +69,7 @@ def _effective_pol(payload: Any) -> Optional[np.ndarray]:
 
 
 def _coupling_mag(
-    derived: Any, pair: TransitionPair, E: Optional[np.ndarray]
+    derived: Any, pair: TransitionPair, E: np.ndarray | None
 ) -> float:
     if E is None:
         return 1.0
@@ -126,12 +124,12 @@ class QDDriveDecoder(DriveDecoderProto):
         self,
         specs: Sequence[DriveSpec],
         *,
-        ctx: Optional[DriveDecodeContextProto] = None,
+        ctx: DriveDecodeContextProto | None = None,
     ) -> Sequence[ResolvedDrive]:
         if ctx is None or not isinstance(ctx, QDDriveDecodeContext):
             raise TypeError("QDDriveDecoder requires QDDriveDecodeContext")
 
-        out: List[ResolvedDrive] = []
+        out: list[ResolvedDrive] = []
 
         for spec in specs:
             # store payload first (so later stages can always find it)
@@ -147,7 +145,7 @@ class QDDriveDecoder(DriveDecoderProto):
 
     def _decode_one(
         self, spec: DriveSpec, *, ctx: QDDriveDecodeContext
-    ) -> List[ResolvedDrive]:
+    ) -> list[ResolvedDrive]:
         drive = spec.payload
         if spec.drive_id is None:
             raise ValueError("DriveSpec.drive_id must be set for QD pipeline")
@@ -205,7 +203,7 @@ class QDDriveDecoder(DriveDecoderProto):
                 tlist_solver, time_unit_s
             )
         # score all candidates
-        scored: List[Tuple[float, TransitionPair, str, float, float, float]] = (
+        scored: list[tuple[float, TransitionPair, str, float, float, float]] = (
             []
         )
         for pair in targets:
@@ -252,21 +250,21 @@ class QDDriveDecoder(DriveDecoderProto):
                 if float(item[0]) <= thr:
                     chosen.append(item)
 
-        print(
-            "chosen_final:",
-            [
-                (
-                    p.value if hasattr(p, "value") else str(p),
-                    kind,
-                    c_mag,
-                    d0,
-                    score,
-                )
-                for score, p, kind, _, c_mag, d0 in chosen
-            ],
-        )
+        # print(
+        #    "chosen_final:",
+        #    [
+        #        (
+        #            p.value if hasattr(p, "value") else str(p),
+        #            kind,
+        #            c_mag,
+        #            d0,
+        #            score,
+        #        )
+        #        for score, p, kind, _, c_mag, d0 in chosen
+        #    ],
+        # )
 
-        out: List[ResolvedDrive] = []
+        out: list[ResolvedDrive] = []
         for score, pair, kind, omega_ref, c_mag, d0 in chosen:
             out.append(
                 ResolvedDrive(

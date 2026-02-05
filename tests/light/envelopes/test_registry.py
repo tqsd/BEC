@@ -3,9 +3,9 @@ import unittest
 from smef.core.units import Q
 
 from bec.light.envelopes.gaussian import GaussianEnvelopeU
+from bec.light.envelopes.registry import envelope_from_json, envelope_to_json
 from bec.light.envelopes.symbolic import SymbolicEnvelopeU
 from bec.light.envelopes.tabulated import TabulatedEnvelopeU
-from bec.light.envelopes.registry import envelope_from_json, envelope_to_json
 
 
 class TestEnvelopeRegistry(unittest.TestCase):

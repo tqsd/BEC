@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Any, Union
 
-from smef.core.units import QuantityLike, Q, as_quantity, magnitude
-
+from smef.core.units import Q, QuantityLike, as_quantity, magnitude
 
 TimeLike = Union[QuantityLike, float, int]
 OmegaLike = Union[QuantityLike, float, int]
@@ -36,9 +36,9 @@ class Carrier:
     """
 
     omega0: QuantityLike
-    delta_omega: Union[QuantityLike, OmegaFn] = 0.0
+    delta_omega: QuantityLike | OmegaFn = 0.0
     phi0: float = 0.0
-    label: Optional[str] = None
+    label: str | None = None
 
     _omega0_rad_s: float = field(init=False, repr=False)
 
@@ -76,7 +76,7 @@ class Carrier:
             return float(magnitude(self.omega_phys(t_phys), "rad/s"))
         return self._omega0_rad_s + float(magnitude(d, "rad/s"))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         JSON serialization. Only works for constant delta_omega.
         """
@@ -98,7 +98,7 @@ class Carrier:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Carrier":
+    def from_dict(cls, data: dict[str, Any]) -> Carrier:
         w0 = data["omega0"]
         dw = data.get("delta_omega", {"value": 0.0, "unit": "rad/s"})
         return cls(

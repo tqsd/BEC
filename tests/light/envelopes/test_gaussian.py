@@ -1,5 +1,5 @@
-import unittest
 import math
+import unittest
 
 from smef.core.units import Q
 

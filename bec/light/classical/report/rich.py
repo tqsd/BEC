@@ -6,9 +6,9 @@ from .plain import render_plain
 
 def render_rich(rep: DriveReportData, *, show_ascii_plot: bool = True) -> str:
     try:
+        from rich import box
         from rich.console import Console
         from rich.table import Table
-        from rich import box
     except Exception:
         return render_plain(rep, show_ascii_plot=show_ascii_plot)
 

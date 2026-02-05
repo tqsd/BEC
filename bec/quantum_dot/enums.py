@@ -12,7 +12,6 @@ This module defines stable IDs used across the codebase:
 from __future__ import annotations
 
 from enum import Enum
-from typing import Dict, Tuple
 
 
 class QDState(str, Enum):
@@ -80,22 +79,8 @@ class TransitionKind(str, Enum):
     EFFECTIVE_2PH = "effective_2ph"
 
 
-class RateKey(str, Enum):
-    RAD_XX_X1 = "RAD_XX_X1"
-    RAD_XX_X2 = "RAD_XX_X2"
-    RAD_X1_G = "RAD_X1_G"
-    RAD_X2_G = "RAD_X2_G"
-    PH_DEPH_X1 = "PH_DEPH_X1"
-    PH_DEPH_X2 = "PH_DEPH_X2"
-    PH_DEPH_XX = "PH_DEPH_XX"
-    PH_RELAX_X1_X2 = "PH_RELAX_X1_X2"
-    PH_RELAX_X2_X1 = "PH_RELAX_X2_X1"
-
-
 # --- Pure topology helpers (no physics/config) ---
-
-
-_PAIR_OF: Dict[Transition, TransitionPair] = {
+_PAIR_OF: dict[Transition, TransitionPair] = {
     Transition.G_X1: TransitionPair.G_X1,
     Transition.X1_G: TransitionPair.G_X1,
     Transition.G_X2: TransitionPair.G_X2,
@@ -108,7 +93,7 @@ _PAIR_OF: Dict[Transition, TransitionPair] = {
     Transition.XX_G: TransitionPair.G_XX,
 }
 
-_REVERSE_OF: Dict[Transition, Transition] = {
+_REVERSE_OF: dict[Transition, Transition] = {
     Transition.G_X1: Transition.X1_G,
     Transition.X1_G: Transition.G_X1,
     Transition.G_X2: Transition.X2_G,
@@ -130,7 +115,7 @@ def reverse_transition(tr: Transition) -> Transition:
     return _REVERSE_OF[tr]
 
 
-def directed_of(pair: TransitionPair) -> Tuple[Transition, Transition]:
+def directed_of(pair: TransitionPair) -> tuple[Transition, Transition]:
     """
     Return (forward, backward) directed transitions for a pair.
     'forward' here is the low->high direction consistent with your naming.

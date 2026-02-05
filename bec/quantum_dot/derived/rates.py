@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import cached_property
-from typing import Mapping
 
 from smef.core.units import QuantityLike, as_quantity
 

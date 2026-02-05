@@ -1,6 +1,6 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Optional
 
 from smef.core.ir.ops import OpExpr
 from smef.core.ir.terms import Term, TermKind
@@ -9,7 +9,8 @@ from smef.core.units import Q, hbar, magnitude
 
 from bec.quantum_dot.enums import Transition
 from bec.quantum_dot.smef.catalogs.base import FrozenCatalog
-from bec.quantum_dot.smef.modes import QDModes, QDModeKey
+from bec.quantum_dot.smef.modes import QDModeKey, QDModes
+
 from .base import _delta_prime_eV, _proj, _t
 
 
@@ -58,7 +59,7 @@ class QDHamiltonianCatalog(FrozenCatalog):
         qd,
         *,
         units,
-        modes: Optional[QDModes] = None,
+        modes: QDModes | None = None,
     ) -> TermCatalogProto:
         if units is None:
             raise ValueError("units must be provided")

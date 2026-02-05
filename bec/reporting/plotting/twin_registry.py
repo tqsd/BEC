@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import List, Iterable
+from collections.abc import Iterable
 from weakref import WeakKeyDictionary
 
 from matplotlib.axes import Axes
 
-
-_TWIN_AXES: WeakKeyDictionary[Axes, List[Axes]] = WeakKeyDictionary()
+_TWIN_AXES: WeakKeyDictionary[Axes, list[Axes]] = WeakKeyDictionary()
 
 
 def register_twin_axes(ax: Axes, twin: Axes) -> None:

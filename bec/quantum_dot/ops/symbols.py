@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Dict, Union
+from typing import Union
 
 
 class QDSymbol(str, Enum):
@@ -39,7 +39,7 @@ def sym(x: SymbolLike) -> str:
     return str(x)
 
 
-def qd_symbol_latex_map() -> Dict[str, str]:
+def qd_symbol_latex_map() -> dict[str, str]:
     # Canonical symbol string -> LaTeX
     return {
         # Projectors

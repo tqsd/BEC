@@ -1,12 +1,12 @@
 import unittest
-import numpy as np
 
+import numpy as np
 from smef.core.units import Q
-from bec.quantum_dot.enums import Transition
+
+from bec.quantum_dot.derived.exciton_basis import ExcitonBasisReportMixin
+from bec.quantum_dot.spec.dipole_params import DipoleParams
 from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.exciton_mixing_params import ExcitonMixingParams
-from bec.quantum_dot.spec.dipole_params import DipoleParams
-from bec.quantum_dot.derived.exciton_basis import ExcitonBasisReportMixin
 
 
 class _QDStub:

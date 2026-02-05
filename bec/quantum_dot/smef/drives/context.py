@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping, MutableMapping, Optional
+from typing import Any
 
 import numpy as np
-
 from smef.core.drives.protocols import DriveDecodeContextProto
 
 
@@ -27,18 +27,18 @@ class DecodePolicy:
 class QDDriveDecodeContext(DriveDecodeContextProto):
     derived: Any
     policy: DecodePolicy = DecodePolicy()
-    bandwidth_sigma_omega_rad_s: Optional[float] = None
+    bandwidth_sigma_omega_rad_s: float | None = None
 
     meta: Mapping[str, Any] = field(default_factory=dict)
     meta_drives: MutableMapping[Any, Any] = field(default_factory=dict)
 
     # NEW: solver grid injected by SMEF engine
-    tlist_solver: Optional[np.ndarray] = None
-    time_unit_s: Optional[float] = None
+    tlist_solver: np.ndarray | None = None
+    time_unit_s: float | None = None
 
     def with_solver_grid(
         self, *, tlist: np.ndarray, time_unit_s: float
-    ) -> "QDDriveDecodeContext":
+    ) -> QDDriveDecodeContext:
         return replace(
             self,
             tlist_solver=np.asarray(tlist, dtype=float).reshape(-1),

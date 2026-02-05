@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -15,7 +15,7 @@ def payload_from_ctx(drive_id: Any, ctx: QDDriveDecodeContext) -> Any:
 
 def sample_omega_L_rad_s(
     payload: Any, t_phys_s: np.ndarray
-) -> Optional[np.ndarray]:
+) -> np.ndarray | None:
     fn = getattr(payload, "omega_L_rad_s", None)
     if not callable(fn):
         return None

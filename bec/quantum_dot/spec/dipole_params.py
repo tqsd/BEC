@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Tuple, Optional
+from typing import Any
 
 import numpy as np
 
 from bec.core.units import as_Cm, as_eV
 from bec.light.core.polarization import JonesState
 from bec.quantum_dot.enums import Transition, TransitionPair, transition_pair_of
-
 
 HVVec = np.ndarray  # shape (2,), complex
 
@@ -92,9 +92,9 @@ class DipoleParams:
     """
 
     mu_default: Any = field(default_factory=lambda: as_Cm(1e-29))
-    mu_by_pair: Dict[TransitionPair, Any] = field(default_factory=dict)
+    mu_by_pair: dict[TransitionPair, Any] = field(default_factory=dict)
 
-    pol_hv_by_pair: Dict[TransitionPair, Tuple[complex, complex]] = field(
+    pol_hv_by_pair: dict[TransitionPair, tuple[complex, complex]] = field(
         default_factory=dict
     )
 
@@ -111,12 +111,12 @@ class DipoleParams:
         mu_default_Cm: Any = 1e-29,
         mu_by_pair_Cm: Mapping[TransitionPair, Any] | None = None,
         pol_hv_by_pair: (
-            Mapping[TransitionPair, Tuple[complex, complex]] | None
+            Mapping[TransitionPair, tuple[complex, complex]] | None
         ) = None,
         default_pol: JonesState | None = None,
         fss_model: Any = 0.0,
         delta_prime_model: Any = 0.0,
-    ) -> "DipoleParams":
+    ) -> DipoleParams:
         dp = cls(
             mu_default=as_Cm(mu_default_Cm),
             mu_by_pair={p: as_Cm(v) for p, v in (mu_by_pair_Cm or {}).items()},
@@ -140,9 +140,9 @@ class DipoleParams:
         # Optional extra rotation for "crystal axis" etc (applied on top)
         theta_extra_rad: float = 0.0,
         mu_default_Cm: Any = 1e-29,
-        mu_by_pair_Cm: Optional[Mapping[TransitionPair, Any]] = None,
+        mu_by_pair_Cm: Mapping[TransitionPair, Any] | None = None,
         x1_is_p1: bool = True,
-    ) -> "DipoleParams":
+    ) -> DipoleParams:
         fss_q = as_eV(fss).to("eV")
         dp_q = as_eV(delta_prime).to("eV")
         scale_q = as_eV(fss_scale).to("eV")
@@ -229,7 +229,7 @@ class DipoleParams:
         _ = float(self.fss_model.to("eV").magnitude)
         _ = float(self.delta_prime_model.to("eV").magnitude)
 
-    def as_floats(self) -> Dict[str, Any]:
+    def as_floats(self) -> dict[str, Any]:
         return {
             "mu_default_Cm": float(self.mu_default.to("C*m").magnitude),
             "mu_by_pair_Cm": {

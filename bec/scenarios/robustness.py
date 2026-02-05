@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict
-
 import numpy as np
 
-from .types import RobustnessSummary, SchemeKind, Sweep1DResult, Sweep2DResult
+from .types import RobustnessSummary, Sweep1DResult, Sweep2DResult
 
 
 def pass_fraction(xx: np.ndarray, *, threshold: float) -> float:
@@ -23,7 +21,7 @@ def auc_above_threshold(
 
 def robustness_summary_1d(
     res: Sweep1DResult, *, threshold: float
-) -> Dict[str, RobustnessSummary]:
+) -> dict[str, RobustnessSummary]:
     pf = pass_fraction(res.xx_final, threshold=float(threshold))
     auc = auc_above_threshold(
         res.xx_final, res.values, threshold=float(threshold)
@@ -47,7 +45,7 @@ def robustness_summary_1d(
 
 def robustness_summary_2d(
     res: Sweep2DResult, *, threshold: float
-) -> Dict[str, RobustnessSummary]:
+) -> dict[str, RobustnessSummary]:
     Z = np.asarray(res.xx_final, dtype=float)
     pf = float(np.mean(Z >= float(threshold)))
 

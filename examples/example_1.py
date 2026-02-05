@@ -1,22 +1,21 @@
 from __future__ import annotations
 
-import numpy as np
 import matplotlib.pyplot as plt
-
+import numpy as np
 from smef.core.drives.types import DriveSpec
-from smef.engine import SimulationEngine, UnitSystem
 from smef.core.units import Q
+from smef.engine import SimulationEngine, UnitSystem
 
+from bec.light.classical import carrier_profiles
+from bec.light.classical.carrier import Carrier
 from bec.light.classical.factories import gaussian_field_drive
 from bec.light.classical.field_drive import ClassicalFieldDriveU
-from bec.light.classical.carrier import Carrier
-from bec.light.classical import carrier_profiles
-
+from bec.metrics.metrics import QDDiagnostics
 from bec.quantum_dot.dot import QuantumDot
 from bec.quantum_dot.enums import QDState, TransitionPair
 from bec.quantum_dot.smef.initial_state import rho0_qd_vacuum
-from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.quantum_dot.spec.dipole_params import DipoleParams
+from bec.quantum_dot.spec.energy_structure import EnergyStructure
 from bec.reporting.plotting.api import plot_run
 from bec.reporting.plotting.grid import PlotConfig
 
@@ -43,8 +42,8 @@ def main() -> None:
     # --- build drive ---
     base = gaussian_field_drive(
         t0=Q(60, "ps"),
-        sigma=Q(8, "ps"),
-        E0=Q(2e4, "V/m"),
+        sigma=Q(3, "ps"),
+        E0=Q(8e5, "V/m"),
         energy=Q(1.3, "eV"),
         delta_omega=Q(0.0, "rad/s"),
         pol_state=None,
@@ -52,12 +51,9 @@ def main() -> None:
         label="drive_base",
     )
 
-    delta_fn = carrier_profiles.linear_chirp(
-        rate=Q(6.0e22, "rad/s^2"),
-        t0=Q(60, "ps"),
+    carrier = Carrier(
+        omega0=Q(omega0, "rad/s"),
     )
-
-    carrier = Carrier(omega0=Q(omega0, "rad/s"), delta_omega=delta_fn)
 
     drive = ClassicalFieldDriveU(
         envelope=base.envelope,
@@ -75,12 +71,6 @@ def main() -> None:
         [float(drive.omega_L_rad_s(float(t))) for t in t_phys], dtype=float
     )
 
-    plt.figure()
-    plt.plot(t_phys * 1e12, omega_L)
-    plt.xlabel("t (ps)")
-    plt.ylabel("omega_L (rad/s)")
-    plt.title("Drive carrier omega_L(t)")
-
     # --- initial state ---
     bundle = qd.compile_bundle(units=units)
     dims = bundle.modes.dims()
@@ -94,7 +84,7 @@ def main() -> None:
         "method": "bdf",
         "atol": 1e-10,
         "rtol": 1e-8,
-        "nsteps": 200000,
+        "nsteps": 20000,
         "max_step": 0.02,
         "progress_bar": "tqdm",
     }
@@ -107,18 +97,15 @@ def main() -> None:
         drives=specs,
         solve_options={"qutip_options": qutip_options},
     )
+    diag = QDDiagnostics()
+    m = diag.compute(qd, res, units=units)
+    print(m.to_text(precision=6))
 
     fig = plot_run(
         res,
         units=units,
         drives=[drive],
         qd=qd,
-        cfg=PlotConfig(
-            title="Chirped drive",
-            show_omega_L=True,
-            show_coupling_panel=True,
-            coupling_mode="abs",
-        ),
     )
     plt.show()
 

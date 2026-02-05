@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
-
 from smef.core.units import QuantityLike
 
 
@@ -23,10 +22,10 @@ class EnvelopeU(Protocol):
 
 @runtime_checkable
 class SerializableEnvelopeU(EnvelopeU, Protocol):
-    def to_dict(self) -> Dict[str, Any]: ...
+    def to_dict(self) -> dict[str, Any]: ...
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SerializableEnvelopeU": ...
+    def from_dict(cls, data: dict[str, Any]) -> SerializableEnvelopeU: ...
 
 
 @runtime_checkable

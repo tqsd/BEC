@@ -1,6 +1,6 @@
 import unittest
 
-from smef.core.units import Q, as_quantity, magnitude
+from smef.core.units import Q, magnitude
 
 from bec.light.classical.carrier_profiles import (
     constant,

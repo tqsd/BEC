@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -18,7 +19,7 @@ class SweepAxis(str, Enum):
     DETUNING_OFFSET_RAD_S = "detuning_offset_rad_s"
 
 
-DriveFactory = Callable[..., Tuple[List[Any], List[Any]]]
+DriveFactory = Callable[..., tuple[list[Any], list[Any]]]
 # Returns: (drive_specs, payloads_for_plotting)
 
 
@@ -70,7 +71,7 @@ class Sweep1DResult:
     axis: SweepAxis
     values: np.ndarray
     xx_final: np.ndarray
-    meta: Dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -81,7 +82,7 @@ class Sweep2DResult:
     x_values: np.ndarray
     y_values: np.ndarray
     xx_final: np.ndarray  # shape (len(y), len(x))
-    meta: Dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -89,4 +90,4 @@ class RobustnessSummary:
     scheme: SchemeKind
     metric: str
     value: float
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
