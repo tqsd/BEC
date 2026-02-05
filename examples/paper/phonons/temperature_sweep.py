@@ -3,9 +3,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -32,10 +31,14 @@ from bec.reporting.plotting.labels import ax_label
 from bec.reporting.plotting.styles import apply_style, default_style
 from bec.scenarios.factories import SchemeKind, get_scheme_factory
 
-# Use the plotting style of the package
+
+# ---------------------------------------------------------------------------
+# Global style + solver configuration
+# ---------------------------------------------------------------------------
+
 apply_style(default_style())
 
-_SOLVE_OPTIONS = {
+_SOLVE_OPTIONS: Dict[str, Any] = {
     "qutip_options": {
         "method": "bdf",
         "atol": 1e-10,
@@ -47,6 +50,11 @@ _SOLVE_OPTIONS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Plotting helpers
+# ---------------------------------------------------------------------------
+
+
 def plot_temperature_sweep_pretty(
     *,
     temps_K: np.ndarray,
@@ -54,11 +62,15 @@ def plot_temperature_sweep_pretty(
     fid: np.ndarray,
     ln_cond: np.ndarray,
     score: np.ndarray,
-    title: str | None = None,
+    title: Optional[str] = None,
 ) -> plt.Figure:
-    # Single-column width (two-column paper)
+    """
+    Two-panel, single-column figure:
+      top: conditional log-negativity + Bell fidelity (linear)
+      bottom: p11 and p11*E_N (log)
+    """
     fig_width_in = 3.35
-    fig_height_in = 3.10  # taller to fit two panels
+    fig_height_in = 3.10
 
     x = np.asarray(temps_K, dtype=float).reshape(-1)
     p11 = np.asarray(p11, dtype=float).reshape(-1)
@@ -67,15 +79,14 @@ def plot_temperature_sweep_pretty(
     score = np.asarray(score, dtype=float).reshape(-1)
 
     fig = plt.figure(figsize=(fig_width_in, fig_height_in))
-
-    # Use GridSpec without subplots helper (keeps your style control)
     gs = fig.add_gridspec(
         nrows=2, ncols=1, height_ratios=[1.0, 1.0], hspace=0.10
     )
+
     ax_top = fig.add_subplot(gs[0, 0])
     ax_bot = fig.add_subplot(gs[1, 0], sharex=ax_top)
 
-    # --- Top panel: entanglement + fidelity (linear) ---
+    # --- Top panel (linear) ---
     ax_top.plot(
         x,
         ln_cond,
@@ -94,17 +105,10 @@ def plot_temperature_sweep_pretty(
         markersize=3.0,
         label=r"$F_{\Phi^+}$",
     )
-
-    # Make the meaning visible in the axis label, with LaTeX symbols
     ax_top.set_ylabel(
-        ax_label(
-            "",
-            r"E_{\mathcal{N}}^{\mathrm{cond}},\,F_{\Phi^+}",
-            r"1",
-        )
+        ax_label("", r"E_{\mathcal{N}}^{\mathrm{cond}},\,F_{\Phi^+}", r"1")
     )
 
-    # Optional: tighten y-lims to the data range so the change is visible
     y_min = float(np.nanmin([np.nanmin(ln_cond), np.nanmin(fid)]))
     y_max = float(np.nanmax([np.nanmax(ln_cond), np.nanmax(fid)]))
     pad = 0.05 * (y_max - y_min + 1e-12)
@@ -112,8 +116,8 @@ def plot_temperature_sweep_pretty(
 
     ax_top.grid(True, which="major", linestyle=":", linewidth=0.6, alpha=0.6)
     ax_top.tick_params(axis="both", which="major", labelsize=7)
+    ax_top.tick_params(labelbottom=False)
 
-    # Legend in the top panel only (small, unobtrusive)
     ax_top.legend(
         loc="upper right",
         fontsize=7,
@@ -122,14 +126,10 @@ def plot_temperature_sweep_pretty(
         borderaxespad=0.3,
     )
 
-    # If you want a title, keep it subtle
     if title:
         ax_top.set_title(title, fontsize=8)
 
-    # Hide x tick labels on top panel (shared axis)
-    ax_top.tick_params(labelbottom=False)
-
-    # --- Bottom panel: probabilities / score (log) ---
+    # --- Bottom panel (log) ---
     ax_bot.plot(
         x,
         p11,
@@ -152,11 +152,7 @@ def plot_temperature_sweep_pretty(
     ax_bot.set_yscale("log")
     ax_bot.set_xlabel(ax_label("Temperature", "T", r"\kelvin"))
     ax_bot.set_ylabel(
-        ax_label(
-            "",
-            r"p_{11},\,p_{11}E_{\mathcal{N}}^{\mathrm{cond}}",
-            r"1",
-        )
+        ax_label("", r"p_{11},\,p_{11}E_{\mathcal{N}}^{\mathrm{cond}}", r"1")
     )
 
     ax_bot.grid(True, which="major", linestyle=":", linewidth=0.6, alpha=0.6)
@@ -171,10 +167,8 @@ def plot_temperature_sweep_pretty(
         borderaxespad=0.3,
     )
 
-    # Small margins (paper-like)
     ax_bot.margins(x=0.02)
     fig.tight_layout(pad=0.2)
-
     return fig
 
 
@@ -190,6 +184,30 @@ def save_fig_pdf(
         transparent=bool(transparent),
         metadata={"Creator": "examples.temperature_sweep"},
     )
+
+
+def write_csv(
+    path: Path,
+    *,
+    temps_K: np.ndarray,
+    p11: np.ndarray,
+    fid: np.ndarray,
+    score: np.ndarray,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = "T_K,p11,fid_post,score_p11_times_fid\n"
+    with path.open("w", encoding="utf-8") as f:
+        f.write(header)
+        for T, p, fi, sc in zip(temps_K, p11, fid, score):
+            f.write(
+                "%.9g,%.18g,%.18g,%.18g\n"
+                % (float(T), float(p), float(fi), float(sc))
+            )
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -211,55 +229,73 @@ class TempSweepCfg:
     detuning_offset_rad_s: float = 0.0
 
 
-def _bose_n(
-    delta_omega,
-    T,
-):
-    # delta_omega: Quantity [rad/s]
-    # T: Quantity [K]
+# ---------------------------------------------------------------------------
+# Phonon rate model (simple, explicit)
+# ---------------------------------------------------------------------------
+
+
+def bose_occupation(delta_omega: Any, T: Any) -> float:
+    """
+    Bose-Einstein occupation n(omega, T) = 1/(exp(hbar*omega/(kB*T)) - 1).
+
+    delta_omega: angular frequency quantity [rad/s]
+    T: temperature (float or quantity compatible with kB)
+    """
     x = (hbar * delta_omega / (kB * T)).to_base_units().magnitude
-    if x > 700:  # avoid overflow in exp
+    if x > 700:
         return 0.0
     return 1.0 / (math.exp(float(x)) - 1.0)
 
 
-def _J_superohmic_gaussian(omega, *, alpha, omega_c):
-    # omega: Quantity [rad/s]
-    # alpha: Quantity [s^2]
-    # omega_c: Quantity [rad/s]
+def J_superohmic_gaussian(omega: Any, *, alpha: Any, omega_c: Any) -> float:
+    """
+    Super-ohmic Gaussian spectral density:
+      J(omega) = alpha * omega^3 * exp(-(omega/omega_c)^2)
+    Returns a float with units 1/s (given alpha in s^2 and omega in 1/s).
+    """
     w = omega.to("rad/s").magnitude
     wc = omega_c.to("rad/s").magnitude
     a = alpha.to("s**2").magnitude
-    return a * (w**3) * math.exp(-((w / wc) ** 2))  # units: 1/s
+    return a * (w**3) * math.exp(-((w / wc) ** 2))
 
 
 def exciton_relax_rates(
     *,
-    delta_omega,  # Quantity [rad/s]
-    T,  # Quantity [K]
+    delta_omega: Any,  # [rad/s]
+    T: Any,  # [K] or float compatible with kB
     phi_x1: float,
     phi_x2: float,
-    alpha,  # Quantity [s^2]
-    omega_c,  # Quantity [rad/s]
-):
+    alpha: Any,  # [s^2]
+    omega_c: Any,  # [rad/s]
+) -> Tuple[float, float]:
+    """
+    Simple detailed-balance pair:
+      gamma_down = Gamma * (n + 1)
+      gamma_up   = Gamma * n
+    with Gamma = 2*pi*(phi_x1 - phi_x2)^2 * J(delta_omega).
+    """
     s2 = (float(phi_x1) - float(phi_x2)) ** 2
-    J = _J_superohmic_gaussian(delta_omega, alpha=alpha, omega_c=omega_c)  # 1/s
-    Gamma = (2.0 * math.pi) * s2 * J  # 1/s
-    n = _bose_n(delta_omega, T)
-    gamma_down = Gamma * (n + 1.0)  # X_high -> X_low
-    gamma_up = Gamma * n  # X_low -> X_high
+    J = J_superohmic_gaussian(delta_omega, alpha=alpha, omega_c=omega_c)
+    Gamma = (2.0 * math.pi) * s2 * J
+    n = bose_occupation(delta_omega, T)
+    gamma_down = Gamma * (n + 1.0)
+    gamma_up = Gamma * n
     return gamma_down, gamma_up
 
 
+# ---------------------------------------------------------------------------
+# QD factory (energy structure + cavity + phonons)
+# ---------------------------------------------------------------------------
+
+
 def make_qd_phonons(T_K: float = 4.0) -> QuantumDot:
+    # --- Energy + dipoles + cavity ---
     exciton = Q(1.300, "eV")
     binding = Q(3.0e-3, "eV")
     fss = Q(5.0e-6, "eV")
 
     energy = EnergyStructure.from_params(
-        exciton=exciton,
-        binding=binding,
-        fss=fss,
+        exciton=exciton, binding=binding, fss=fss
     )
 
     dipoles = DipoleParams.biexciton_cascade_from_fss(
@@ -274,6 +310,7 @@ def make_qd_phonons(T_K: float = 4.0) -> QuantumDot:
         n=3.4,
     )
 
+    # --- Phonon couplings + rate knobs ---
     couplings = PhononCouplings(
         phi_g=0.0,
         phi_x1=0.7,
@@ -283,21 +320,24 @@ def make_qd_phonons(T_K: float = 4.0) -> QuantumDot:
 
     alpha = Q(1, "ps**2")
     omega_c = Q(1.0e12, "rad/s")
-    domega = (fss.to("J") / hbar).to("1/s")
+
+    delta_omega = (fss.to("J") / hbar).to("1/s")
     g_down, g_up = exciton_relax_rates(
-        delta_omega=domega,
-        T=T_K,
+        delta_omega=delta_omega,
+        T=float(T_K),
         phi_x1=couplings.phi_x1,
         phi_x2=couplings.phi_x2,
         alpha=alpha,
         omega_c=omega_c,
     )
 
+    # Keep your existing wiring: rates are stored in phenomenological params
     phenom = PhenomenologicalPhononParams(
         gamma_relax_x1_x2=as_rate_1_s(g_down),
         gamma_relax_x2_x1=as_rate_1_s(g_up),
     )
     print(phenom)
+
     polaron_la = PolaronLAParams(
         spectral_density=SpectralDensityKind.SUPER_OHMIC_GAUSSIAN,
         enable_polaron_renorm=True,
@@ -317,11 +357,13 @@ def make_qd_phonons(T_K: float = 4.0) -> QuantumDot:
     )
 
     return QuantumDot(
-        energy=energy,
-        dipoles=dipoles,
-        cavity=cavity,
-        phonons=phonons,
+        energy=energy, dipoles=dipoles, cavity=cavity, phonons=phonons
     )
+
+
+# ---------------------------------------------------------------------------
+# Simulation plumbing
+# ---------------------------------------------------------------------------
 
 
 def make_units_and_tlist(cfg: RunCfg) -> Tuple[UnitSystem, np.ndarray, float]:
@@ -344,7 +386,7 @@ def run_one(
     scheme: SchemeKind,
     amp_scale: float,
     detuning_offset_rad_s: float = 0.0,
-    scheme_kwargs: Dict[str, Any] | None = None,
+    scheme_kwargs: Optional[Dict[str, Any]] = None,
     audit: bool = False,
 ) -> Tuple[Any, List[Any], UnitSystem]:
     units, tlist, time_unit_s = make_units_and_tlist(cfg)
@@ -393,6 +435,7 @@ def print_phonon_sanity(qd: QuantumDot) -> None:
         print(
             "phonon_outputs.rates keys:", sorted([str(k) for k in rates.keys()])
         )
+
         shown = 0
         for k, v in rates.items():
             if shown >= 8:
@@ -403,6 +446,7 @@ def print_phonon_sanity(qd: QuantumDot) -> None:
                 val = v
             print("  rate[%s]: %s" % (str(k), str(val)))
             shown += 1
+
         if shown == 0:
             print(
                 "No phonon rates present (maybe only renorm is active, or rates disabled)."
@@ -418,7 +462,7 @@ def run_temperature_sweep(
     cfg: RunCfg,
     sweep: TempSweepCfg,
     scheme: SchemeKind = SchemeKind.TPE,
-    scheme_kwargs: Dict[str, Any] | None = None,
+    scheme_kwargs: Optional[Dict[str, Any]] = None,
     audit: bool = False,
     verbose: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -436,7 +480,7 @@ def run_temperature_sweep(
     for i, T in enumerate(temps_K):
         qd = make_qd_phonons(T_K=float(T))
 
-        res, payloads, units = run_one(
+        res, _, units = run_one(
             qd=qd,
             cfg=cfg,
             scheme=scheme,
@@ -468,77 +512,9 @@ def run_temperature_sweep(
     return temps_K, p11, fid, lns, score
 
 
-def write_csv(
-    path: Path,
-    *,
-    temps_K: np.ndarray,
-    p11: np.ndarray,
-    fid: np.ndarray,
-    score: np.ndarray,
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    header = "T_K,p11,fid_post,score_p11_times_fid\n"
-    with path.open("w", encoding="utf-8") as f:
-        f.write(header)
-        for T, p, fi, sc in zip(temps_K, p11, fid, score):
-            f.write(
-                "%.9g,%.18g,%.18g,%.18g\n"
-                % (float(T), float(p), float(fi), float(sc))
-            )
-
-
-def plot_temperature_sweep(
-    *,
-    temps_K: np.ndarray,
-    p11: np.ndarray,
-    fid: np.ndarray,
-    score: np.ndarray,
-    title: str,
-) -> plt.Figure:
-    # Single-column width (two-column paper)
-    fig_width_in = 3.35
-    fig_height_in = 2.25
-
-    fig = plt.figure(figsize=(fig_width_in, fig_height_in))
-    ax = fig.add_subplot(111)
-
-    x = np.asarray(temps_K, dtype=float).reshape(-1)
-    y = np.asarray(score, dtype=float).reshape(-1)
-
-    ax.plot(
-        x,
-        y,
-        marker="o",
-        linestyle="-",
-        linewidth=1.2,
-        markersize=3.0,
-    )
-
-    # Axes labels: match your package style (siunitx via ax_label)
-    ax.set_xlabel(ax_label("Temperature", "T", r"\kelvin"))
-    ax.set_ylabel(
-        ax_label(
-            "",
-            r"p_{11}\,E_{\mathcal{N}}^{\mathrm{cond}}",
-            r"1",
-        )
-    )
-
-    # Title (small, paper-friendly)
-    if title:
-        ax.set_title(title, fontsize=8)
-
-    # Light grid, not too intrusive
-    ax.grid(True, which="major", linestyle=":", linewidth=0.6, alpha=0.6)
-
-    # Nice margins + ticks
-    ax.margins(x=0.02, y=0.05)
-    ax.tick_params(axis="both", which="major", labelsize=7)
-
-    # No legend (requested)
-
-    fig.tight_layout(pad=0.2)
-    return fig
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:
@@ -568,21 +544,18 @@ def main() -> None:
         sweep=sweep,
         scheme=SchemeKind.TPE,
         scheme_kwargs={},
-        audit=True,
+        audit=False,
         verbose=True,
     )
 
     fig = plot_temperature_sweep_pretty(
-        temps_K=temps_K, p11=p11, fid=fid, ln_cond=lns, score=score
+        temps_K=temps_K,
+        p11=p11,
+        fid=fid,
+        ln_cond=lns,
+        score=score,
+        title=None,
     )
-
-    # fig = plot_temperature_sweep(
-    #    temps_K=temps_K,
-    #    p11=p11,
-    #    fid=fid,
-    #    score=score,
-    #    title=r"TPE $p_{11}E_\mathcal{N}^\mathrm{cond}$ vs $T$",
-    # )
 
     out_dir = Path("out_1")
     save_fig_pdf(fig, out_dir / "temp_sweep_score.pdf")
@@ -594,7 +567,6 @@ def main() -> None:
         score=score,
     )
 
-    # Also save a PNG for quick viewing
     fig.savefig(
         str(out_dir / "temp_sweep_score.png"), dpi=200, bbox_inches="tight"
     )

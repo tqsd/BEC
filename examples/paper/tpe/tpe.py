@@ -3,7 +3,7 @@ from __future__ import annotations
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional, Sequence
 
 import matplotlib as mpl
 import numpy as np
@@ -22,7 +22,12 @@ from bec.reporting.plotting.grid import PlotConfig
 from bec.reporting.plotting.styles import PlotStyle, default_style
 from bec.scenarios.factories import SchemeKind, get_scheme_factory
 
-_SOLVE_OPTIONS = {
+
+# ---------------------------------------------------------------------------
+# Solver + output defaults
+# ---------------------------------------------------------------------------
+
+_SOLVE_OPTIONS: dict[str, Any] = {
     "qutip_options": {
         "method": "bdf",
         "atol": 1e-10,
@@ -32,6 +37,33 @@ _SOLVE_OPTIONS = {
         "progress_bar": "tqdm",
     }
 }
+
+
+def set_pdf_output_defaults() -> None:
+    mpl.rcParams["pdf.fonttype"] = 42
+    mpl.rcParams["ps.fonttype"] = 42
+
+
+def save_fig_pdf(fig: Any, path: Path, *, transparent: bool = True) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(
+        str(path),
+        format="pdf",
+        bbox_inches="tight",
+        pad_inches=0.01,
+        transparent=bool(transparent),
+        metadata={"Creator": "bec.reporting.plotting"},
+    )
+
+
+def save_fig_png(fig: Any, path: Path, *, dpi: int = 200) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(str(path), dpi=int(dpi), bbox_inches="tight")
+
+
+# ---------------------------------------------------------------------------
+# Config + run container
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -47,35 +79,31 @@ class RunCfg:
 @dataclass(frozen=True)
 class SchemeRun:
     label: str
+    scheme: SchemeKind
+    amp_scale: float
+    detuning_offset_rad_s: float
+    scheme_kwargs: dict[str, Any]
     res: Any
     payloads: list[Any]
 
 
-def set_pdf_output_defaults() -> None:
-    mpl.rcParams["pdf.fonttype"] = 42
-    mpl.rcParams["ps.fonttype"] = 42
+# ---------------------------------------------------------------------------
+# LaTeX table row helper
+# ---------------------------------------------------------------------------
 
 
 def latex_row_from_metrics(
     *,
     label: str,
-    m,
+    m: Any,
     precision: int = 3,
     precision_coh: int = 4,
 ) -> str:
     """
-    Return a single LaTeX table row with \\qty{...}{} wrappers.
+    Return a LaTeX table row with \\qty{...}{} wrappers.
 
-    Column order matches:
-      Scenario
-      N_early
-      N_late
-      E_N
-      E_N_cond
-      P
-      Lambda
-      |rho_pm,mp|
-      phase [rad]
+    Column order:
+      Scenario, N_early, N_late, E_N, E_N_cond, P, Lambda, |rho_pm,mp|, phase [rad]
     """
 
     def fmt_num(x: float, p: int) -> str:
@@ -89,27 +117,20 @@ def latex_row_from_metrics(
             return s
         return r"\qty{" + s + r"}{}"
 
-    # Brightness
     N_early = float(m.counts.n_xx_total)
     N_late = float(m.counts.n_gx_total)
 
-    # Entanglement
     E_N = float(m.log_negativity_uncond)
     E_N_cond = float(m.log_negativity_pol)
 
-    # Purity
     P = float(m.purity_photons_all)
-
-    # Indistinguishability / overlap
     Lambda = float(m.meta.get("overlap_abs_avg", float("nan")))
 
-    # Coherence + phase
     bc = m.meta.get("bell_component", {}) or {}
     coh = bc.get("coherence_cross", {}) or {}
     coh_abs = float(coh.get("abs", float("nan")))
     phase = float(coh.get("phase_rad", float("nan")))
 
-    # Phase in your example uses 1 decimal; keep it separate if you want
     phase_str = fmt_num(phase, 1)
     phase_cell = (
         r"\qty{" + phase_str + r"}{}"
@@ -130,16 +151,9 @@ def latex_row_from_metrics(
     )
 
 
-def save_fig_pdf(fig, path: Path, *, transparent: bool = True) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(
-        str(path),
-        format="pdf",
-        bbox_inches="tight",
-        pad_inches=0.01,
-        transparent=bool(transparent),
-        metadata={"Creator": "bec.reporting.plotting"},
-    )
+# ---------------------------------------------------------------------------
+# QD + simulation plumbing
+# ---------------------------------------------------------------------------
 
 
 def make_qd() -> QuantumDot:
@@ -192,9 +206,10 @@ def run_scheme(
     time_unit_s: float,
     amp_scale: float,
     detuning_offset_rad_s: float,
-    scheme_kwargs: dict[str, Any] | None,
+    scheme_kwargs: Optional[dict[str, Any]],
     audit: bool,
-) -> tuple[Any, list[Any]]:
+    verbose_metrics: bool = True,
+) -> tuple[Any, list[Any], UnitSystem]:
     factory = get_scheme_factory(scheme)
     specs, payloads = factory(
         qd,
@@ -217,10 +232,16 @@ def run_scheme(
         drives=specs,
         solve_options=_SOLVE_OPTIONS,
     )
-    diag = QDDiagnostics()
-    m = diag.compute(qd, res, units=units)
-    print(m.to_text(precision=6))
-    return res, list(payloads)
+
+    if verbose_metrics:
+        diag = QDDiagnostics()
+        m = diag.compute(qd, res, units=units)
+        try:
+            print(m.to_text(precision=6))
+        except Exception:
+            print(m)
+
+    return res, list(payloads), units
 
 
 def try_run(
@@ -233,11 +254,11 @@ def try_run(
     time_unit_s: float,
     amp_scale: float,
     detuning_offset_rad_s: float,
-    scheme_kwargs: dict[str, Any] | None,
+    scheme_kwargs: Optional[dict[str, Any]],
     audit: bool,
-) -> SchemeRun | None:
+) -> Optional[SchemeRun]:
     try:
-        res, payloads = run_scheme(
+        res, payloads, _ = run_scheme(
             qd=qd,
             cfg=cfg,
             scheme=scheme,
@@ -247,8 +268,17 @@ def try_run(
             detuning_offset_rad_s=detuning_offset_rad_s,
             scheme_kwargs=scheme_kwargs,
             audit=audit,
+            verbose_metrics=True,
         )
-        return SchemeRun(label=label, res=res, payloads=payloads)
+        return SchemeRun(
+            label=label,
+            scheme=scheme,
+            amp_scale=float(amp_scale),
+            detuning_offset_rad_s=float(detuning_offset_rad_s),
+            scheme_kwargs=dict(scheme_kwargs or {}),
+            res=res,
+            payloads=payloads,
+        )
     except NotImplementedError as exc:
         print(f"{label} not implemented, skipping: {exc!r}")
         return None
@@ -258,18 +288,21 @@ def try_run(
         return None
 
 
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+
+
 def make_a4_style(*, two_column: bool, height_in: float) -> PlotStyle:
     st = default_style()
-    return (
-        st.a4_two_column(height_in=height_in)
-        if two_column
-        else st.a4_single_column(height_in=height_in)
-    )
+    if two_column:
+        return st.a4_two_column(height_in=height_in)
+    return st.a4_single_column(height_in=height_in)
 
 
 def plot_and_save_individual(
     *,
-    runs: list[SchemeRun],
+    runs: Sequence[SchemeRun],
     units: UnitSystem,
     qd: QuantumDot,
     out_dir: Path,
@@ -286,18 +319,16 @@ def plot_and_save_individual(
         )
         save_fig_pdf(fig, out_dir / f"{r.label}.pdf")
         try:
-            fig.savefig(
-                str(out_dir / f"{r.label}.png"), dpi=200, bbox_inches="tight"
-            )
+            save_fig_png(fig, out_dir / f"{r.label}.png")
         except Exception:
             pass
 
 
 def plot_and_save_grid(
     *,
-    runs: list[SchemeRun],
+    runs: Sequence[SchemeRun],
     units: UnitSystem,
-    qds: list[QuantumDot],
+    qds: Sequence[QuantumDot],
     out_dir: Path,
     style_grid: PlotStyle,
     cfg_grid: PlotConfig,
@@ -309,7 +340,7 @@ def plot_and_save_grid(
         results,
         units=units,
         drives_list=drives_list,
-        qds=qds,
+        qds=list(qds),
         windows_s=None,
         cfg=cfg_grid,
         style=style_grid,
@@ -318,24 +349,106 @@ def plot_and_save_grid(
     for i, fig in enumerate(figs):
         save_fig_pdf(fig, out_dir / f"grid_{i}.pdf")
         try:
-            fig.savefig(
-                str(out_dir / f"grid_{i}.png"), dpi=200, bbox_inches="tight"
-            )
+            save_fig_png(fig, out_dir / f"grid_{i}.png")
         except Exception:
             pass
 
 
-def diagnostics(
-    *, runs: list[SchemeRun], qd: QuantumDot, units: UnitSystem
+# ---------------------------------------------------------------------------
+# CSV export for reproducibility (one row per case)
+# ---------------------------------------------------------------------------
+
+
+def _safe_float(x: Any) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return float("nan")
+
+
+def write_repro_csv(
+    path: Path,
+    *,
+    runs: Sequence[SchemeRun],
+    qd: QuantumDot,
+    units: UnitSystem,
 ) -> None:
+    """
+    Write one row per case with the key quantities used in your plots/tables.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+
     diag = QDDiagnostics()
-    for r in runs:
-        try:
-            m = diag.compute(qd, r.res, units=units)
-            print("Diagnostics:", r.label)
-            print(m.to_text())
-        except Exception as exc:
-            print("Diagnostics failed for", r.label + ":", repr(exc))
+
+    cols = [
+        "label",
+        "scheme",
+        "amp_scale",
+        "detuning_offset_rad_s",
+        "n_xx_total",
+        "n_gx_total",
+        "log_negativity_uncond",
+        "log_negativity_pol",
+        "purity_photons_all",
+        "overlap_abs_avg",
+        "bell_coh_abs",
+        "bell_coh_phase_rad",
+    ]
+
+    with path.open("w", encoding="utf-8") as f:
+        f.write(",".join(cols) + "\n")
+
+        for r in runs:
+            try:
+                m = diag.compute(qd, r.res, units=units)
+
+                n_xx = _safe_float(
+                    getattr(m.counts, "n_xx_total", float("nan"))
+                )
+                n_gx = _safe_float(
+                    getattr(m.counts, "n_gx_total", float("nan"))
+                )
+                ln_un = _safe_float(
+                    getattr(m, "log_negativity_uncond", float("nan"))
+                )
+                ln_pol = _safe_float(
+                    getattr(m, "log_negativity_pol", float("nan"))
+                )
+                purity = _safe_float(
+                    getattr(m, "purity_photons_all", float("nan"))
+                )
+
+                overlap = _safe_float(
+                    m.meta.get("overlap_abs_avg", float("nan"))
+                )
+
+                bc = m.meta.get("bell_component", {}) or {}
+                coh = bc.get("coherence_cross", {}) or {}
+                coh_abs = _safe_float(coh.get("abs", float("nan")))
+                coh_phase = _safe_float(coh.get("phase_rad", float("nan")))
+
+                row = [
+                    r.label,
+                    r.scheme.name,
+                    f"{r.amp_scale:.18g}",
+                    f"{r.detuning_offset_rad_s:.18g}",
+                    f"{n_xx:.18g}",
+                    f"{n_gx:.18g}",
+                    f"{ln_un:.18g}",
+                    f"{ln_pol:.18g}",
+                    f"{purity:.18g}",
+                    f"{overlap:.18g}",
+                    f"{coh_abs:.18g}",
+                    f"{coh_phase:.18g}",
+                ]
+                f.write(",".join(row) + "\n")
+            except Exception as exc:
+                print("CSV export failed for", r.label + ":", repr(exc))
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:
@@ -355,12 +468,9 @@ def main() -> None:
     qd = make_qd()
     units, tlist, time_unit_s = make_units_tlist_time_unit(cfg)
 
-    # --- Baseline choice ---
-    # Pick the "reference" resonant TPE amplitude scale you like.
-    # This is the one you consider to be the nominal pi-pulse (or whatever your factory maps to).
     amp_ref = 1.0
 
-    # --- Case 1: resonant TPE ---
+    # Case 1: resonant pi-ish (reference)
     run_resonant = try_run(
         qd=qd,
         cfg=cfg,
@@ -370,12 +480,11 @@ def main() -> None:
         time_unit_s=time_unit_s,
         amp_scale=amp_ref,
         detuning_offset_rad_s=0.0,
-        scheme_kwargs={},  # keep defaults
+        scheme_kwargs={},
         audit=True,
     )
 
-    # --- Case 2: resonant 5pi pulse ---
-    # Implemented as 5x pulse area by scaling amplitude 5x relative to the reference.
+    # Case 2: resonant 5pi (amplitude scaled)
     run_5pi = try_run(
         qd=qd,
         cfg=cfg,
@@ -389,9 +498,7 @@ def main() -> None:
         audit=True,
     )
 
-    # --- Case 3: detuned TPE ---
-    # Here we detune the two-photon drive by an offset in rad/s.
-    # Example: 3 GHz detuning (in cycles/s) -> 2*pi*3e9 rad/s.
+    # Case 3: detuned pi-ish
     detune_2ph_GHz = 3.0
     detuning_offset_rad_s = float(2.0 * np.pi * detune_2ph_GHz * 1e9)
 
@@ -408,9 +515,7 @@ def main() -> None:
         audit=True,
     )
 
-    runs: list[SchemeRun] = [
-        r for r in (run_resonant, run_5pi, run_detuned) if r is not None
-    ]
+    runs = [r for r in (run_resonant, run_5pi, run_detuned) if r is not None]
     if not runs:
         raise RuntimeError("No runs produced.")
 
@@ -442,20 +547,25 @@ def main() -> None:
         style_grid=style_grid,
         cfg_grid=cfg_grid,
     )
-    diagnostics(runs=runs, qd=qd, units=units)
+
+    # CSV export for reproducing the summary plot/table
+    write_repro_csv(
+        out_dir / "tpe_three_cases_repro.csv", runs=runs, qd=qd, units=units
+    )
 
     print("\n--- LaTeX table rows (paste directly) ---\n")
+    scen_labels = {
+        "tpe_resonant": r"$\pi$-pulse",
+        "tpe_resonant_5pi": r"$5\pi$-pulse",
+        f"tpe_detuned_{detune_2ph_GHz:g}GHz": r"det.\ $\pi$-pulse",
+    }
 
-    for r, scen_label in zip(
-        runs,
-        [
-            r"$\pi$-pulse",
-            r"$5\pi$-pulse",
-            r"det.\ $\pi$-pulse",
-        ],
-    ):
-        m = QDDiagnostics().compute(qd, r.res, units=units)
-        print(latex_row_from_metrics(label=scen_label, m=m))
+    diag = QDDiagnostics()
+    for r in runs:
+        m = diag.compute(qd, r.res, units=units)
+        print(
+            latex_row_from_metrics(label=scen_labels.get(r.label, r.label), m=m)
+        )
 
 
 if __name__ == "__main__":
