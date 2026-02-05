@@ -21,10 +21,10 @@ pytest -q
 ```
 
 ## QSI implementation
-This library provides a wrapper for the `QSI` library in `qsi/classical.py` together with helpers to decode the application of the 
+This library provides a wrapper for the `QSI` library in `qsi/qd_source.py` together with helpers to decode the application of the 
 channel into a mode representation with the correct properties (wavelength, polarization).
 
-An example of how to use the wrapper is implemented in the `examples/qsi/classical_drive_example.py` and `examples/qsi/classical_drive_example.py`
+An example of how to use the wrapper is implemented in the `examples/qsi/simple_example.py`.
 
 To run the example:
 ```bash
@@ -34,4 +34,5 @@ where the port can be any currently unused port.
 
 
 ## Paper results
-The results used in the paper 'Entangled Photon Pair Generator via Biexciton-Exciton Cascade in Semiconductor Quantum Dots and its Simulation' are stored in `plots/paper` directory.
+The results used in the paper 'Entangled Photon Pair Generator via Biexciton-Exciton Cascade in Semiconductor Quantum Dots and its Simulation' are stored in `example/paper` directory.
+
